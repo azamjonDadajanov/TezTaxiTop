@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# TezTaxiTop - core platform dependencies (Django backend + Telegram bot)
+# Python 3.12+
+# ---------------------------------------------------------------------------
+
+# --- Web framework ---------------------------------------------------------
+Django>=5.2,<6.0
+gunicorn>=23.0.0            # production WSGI server
+uvicorn[standard]>=0.34.0   # production ASGI server
+
+# --- Database --------------------------------------------------------------
+psycopg[binary]>=3.2.3     # PostgreSQL driver
+dj-database-url>=2.2.0     # DATABASE_URL parsing
+
+# --- REST API --------------------------------------------------------------
+djangorestframework>=3.15.2
+django-filter>=24.3
+drf-spectacular>=0.28.0
+
+# --- Images (vehicle photos are stored with ImageField) --------------------
+Pillow>=11.0.0
+
+# --- Async tasks / cache ---------------------------------------------------
+celery[redis]>=5.4.0
+redis>=5.2.0
+
+# --- Telegram bot ----------------------------------------------------------
+aiogram>=3.13.1
+requests>=2.32.3            # Bot API client used by apps.core.telegram
+
+# --- Configuration ---------------------------------------------------------
+python-dotenv>=1.0.1
+
+# --- Code quality ----------------------------------------------------------
+ruff>=0.8.0
