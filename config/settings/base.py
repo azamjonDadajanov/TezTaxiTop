@@ -140,6 +140,13 @@ else:
         }
     }
 
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    database_name = DATABASES["default"]["NAME"]
+    if database_name and database_name != ":memory:" and not str(database_name).startswith("file:"):
+        database_path = Path(database_name)
+        if not database_path.is_absolute():
+            DATABASES["default"]["NAME"] = BASE_DIR / database_path
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "users.User"
 

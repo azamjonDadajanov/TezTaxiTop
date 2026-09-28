@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated

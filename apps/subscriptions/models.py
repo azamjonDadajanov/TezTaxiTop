@@ -210,7 +210,8 @@ class DriverSubscription(TimeStampedModel):
     def days_remaining(self) -> int:
         """Whole days left, never negative."""
         from django.utils import timezone
-
+        if self.expires_at is None:
+            return 0
         remaining = (self.expires_at - timezone.now()).total_seconds()
         if remaining <= 0:
             return 0

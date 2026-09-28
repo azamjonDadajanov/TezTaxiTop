@@ -15,11 +15,11 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
         "id",
         "name",
         "duration_days",
-        "duration_months",
+        # "duration_months",
         "price",
         "is_active",
         "sort_order",
-        "subscriptions_count",
+        # "subscriptions_count",
         "created_at",
     )
     list_display_links = ("id", "name")
@@ -35,7 +35,7 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
                 "fields": (
                     "name",
                     "duration_days",
-                    "duration_months",
+                    # "duration_months",
                     "price",
                     "description",
                     "sort_order",
@@ -46,9 +46,9 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
         (_("Vaqtlar"), {"fields": ("created_at", "updated_at")}),
     )
 
-    @admin.display(description=_("Oylar"))
-    def duration_months(self, obj: SubscriptionPlan) -> int:
-        return round(obj.duration_days / 30) if obj.duration_days else 0
+    # @admin.display(description=_("Oylar"))
+    # def duration_months(self, obj: SubscriptionPlan) -> int:
+    #     return round(obj.duration_days / 30) if obj.duration_days else 0
 
     @admin.display(description=_("Obunalar soni"))
     def subscriptions_count(self, obj: SubscriptionPlan) -> int:
