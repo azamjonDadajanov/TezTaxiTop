@@ -75,8 +75,11 @@ async def run_polling() -> None:
     """Start the bot using long polling."""
     _setup_django()
     bot, dp = create_dispatcher()
-    await configure_web_app_menu(bot)
-    await dp.start_polling(bot, drop_pending_updates=True)
+    try:
+        await configure_web_app_menu(bot)
+        await dp.start_polling(bot, drop_pending_updates=True)
+    finally:
+        await bot.session.close()
 
 
 async def run_webhook() -> None:
@@ -98,29 +101,31 @@ async def run_webhook() -> None:
         raise RuntimeError("TELEGRAM_WEBHOOK_URL is required in webhook mode.")
 
     bot, dp = create_dispatcher()
-    await configure_web_app_menu(bot)
-    app = web.Application()
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-        secret_token=WEBHOOK_SECRET or None,
-    ).register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
-
-    await bot.set_webhook(
-        f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}",
-        secret_token=WEBHOOK_SECRET or None,
-        drop_pending_updates=True,
-    )
-
-    runner = web.AppRunner(app)
-    await runner.setup()
+    runner = None
     try:
+        await configure_web_app_menu(bot)
+        app = web.Application()
+        SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+            secret_token=WEBHOOK_SECRET or None,
+        ).register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot)
+
+        await bot.set_webhook(
+            f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}",
+            secret_token=WEBHOOK_SECRET or None,
+            drop_pending_updates=True,
+        )
+
+        runner = web.AppRunner(app)
+        await runner.setup()
         site = web.TCPSite(runner, host=WEBHOOK_HOST, port=WEBHOOK_PORT)
         await site.start()
         await asyncio.Event().wait()
     finally:
-        await runner.cleanup()
+        if runner is not None:
+            await runner.cleanup()
         await bot.session.close()
 
 
@@ -128,16 +133,17 @@ async def configure_web_app_menu(bot: Bot) -> None:
     """Expose the Mini App from Telegram's persistent chat menu when configured."""
     from aiogram.types import MenuButtonWebApp, WebAppInfo
 
-    from bot.config import TELEGRAM_WEBAPP_URL
+    from bot.config import TELEGRAM_WEBAPP_URL, validate_telegram_webapp_url
 
-    if not TELEGRAM_WEBAPP_URL:
+    web_app_url = validate_telegram_webapp_url(TELEGRAM_WEBAPP_URL)
+    if not web_app_url:
         logging.info("Telegram Mini App menu button is disabled: TELEGRAM_WEBAPP_URL is empty.")
         return
 
     await bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(
             text="TezTaxiTop",
-            web_app=WebAppInfo(url=TELEGRAM_WEBAPP_URL),
+            web_app=WebAppInfo(url=web_app_url),
         )
     )
 

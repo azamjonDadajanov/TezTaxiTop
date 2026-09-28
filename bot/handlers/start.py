@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from apps.core.exceptions import BusinessError
-from bot.keyboards import main_menu_keyboard
+from bot.keyboards import main_menu_keyboard, mini_app_inline_keyboard
 from bot.handlers.registration import request_phone_number
 from bot.states import RegistrationStates
 
@@ -31,12 +31,21 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             "Ro'yxatdan o'tish uchun telefon raqamingizni yuboring.",
             reply_markup=request_phone_number(),
         )
+        await send_mini_app_button(message)
     else:
         await message.answer(
             f"Qayta kelganingizdan xursandmiz, {user.first_name}!\n"
             "Asosiy menyuga o'tish uchun quyidagi tugmalardan birini tanlang:",
             reply_markup=await get_main_menu(user),
         )
+        await send_mini_app_button(message)
+
+
+async def send_mini_app_button(message: Message) -> None:
+    """Offer the Mini App through an inline launch, which carries signed initData."""
+    keyboard = mini_app_inline_keyboard()
+    if keyboard is not None:
+        await message.answer("TezTaxiTop Mini App:", reply_markup=keyboard)
 
 
 async def get_main_menu(user) -> "ReplyKeyboardMarkup":
@@ -61,6 +70,7 @@ async def switch_role(message: Message, state: FSMContext) -> None:
         parse_mode="HTML",
         reply_markup=await get_main_menu(user),
     )
+    await send_mini_app_button(message)
 
 
 @router.message(Command("help"))

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import time
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from rest_framework.test import APIClient
 
 from apps.core.exceptions import BusinessValidationError, NotADriver, UserIsBlocked
 from apps.users import services as user_services
@@ -64,6 +70,97 @@ class UserRegistrationTests(TestCase):
         self.assertIsNone(user.last_seen_at)
         user_services.touch_last_seen(user)
         self.assertIsNotNone(user.last_seen_at)
+
+
+@override_settings(TELEGRAM_BOT_TOKEN="123456:test-secret")
+class TelegramMiniAppAuthTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+
+    @override_settings(CORS_ALLOWED_ORIGINS=["https://mini.example.com"])
+    def test_allowlisted_frontend_origin_receives_cors_preflight(self) -> None:
+        response = self.client.options(
+            "/api/v1/auth/telegram-mini-app/",
+            HTTP_ORIGIN="https://mini.example.com",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Access-Control-Allow-Origin"],
+            "https://mini.example.com",
+        )
+
+    def signed_init_data(self, *, auth_date: int | None = None) -> str:
+        fields = {
+            "auth_date": str(auth_date if auth_date is not None else int(time.time())),
+            "user": json.dumps(
+                {
+                    "id": 876543210123,
+                    "first_name": "Mini",
+                    "last_name": "App",
+                    "username": "mini_app_user",
+                    "language_code": "uz",
+                },
+                separators=(",", ":"),
+            ),
+        }
+        data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(fields.items()))
+        secret_key = hmac.new(b"WebAppData", b"123456:test-secret", hashlib.sha256).digest()
+        fields["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        return urlencode(fields)
+
+    def test_signed_init_data_creates_user_and_returns_api_token(self) -> None:
+        response = self.client.post(
+            "/api/v1/auth/telegram-mini-app/",
+            {"init_data": self.signed_init_data()},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data["token"])
+        self.assertTrue(response.data["is_new"])
+        self.assertEqual(response.data["user"]["telegram_id"], 876543210123)
+        self.assertEqual(response.data["user"]["role"], UserRole.PASSENGER)
+        self.assertEqual(response.data["user"]["phone_number"], "")
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {response.data['token']}")
+        profile = self.client.get("/api/v1/auth/me/")
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data["telegram_id"], 876543210123)
+
+    def test_tampered_init_data_is_rejected(self) -> None:
+        init_data = f"{self.signed_init_data()}&username=attacker"
+        response = self.client.post(
+            "/api/v1/auth/telegram-mini-app/",
+            {"init_data": init_data},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(User.objects.count(), 0)
+
+    def test_expired_init_data_is_rejected(self) -> None:
+        expired_auth_date = int(time.time()) - 24 * 60 * 60 - 1
+        response = self.client.post(
+            "/api/v1/auth/telegram-mini-app/",
+            {"init_data": self.signed_init_data(auth_date=expired_auth_date)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(User.objects.count(), 0)
+
+    def test_raw_telegram_id_cannot_register_or_obtain_a_token(self) -> None:
+        response = self.client.post(
+            "/api/v1/auth/register-telegram/",
+            {"telegram_id": 876543210123, "first_name": "Spoofed"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(User.objects.count(), 0)
 
 
 class UserRoleTests(TestCase):

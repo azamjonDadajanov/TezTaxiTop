@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
 import { ArrowRight, CarFront, CircleAlert, ShieldCheck } from 'lucide-react'
 import { AuthProvider } from './auth'
@@ -12,28 +12,12 @@ import { VehiclesPage } from './pages/VehiclesPage'
 import { NotificationsPage, ChatPage, ReviewsPage, SupportPage } from './pages/CommunicationPages'
 
 function AuthGate() {
-  const { user, checking, authenticate } = useAuth()
-  const [token, setToken] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const { user, checking, authError, signInWithTelegram } = useAuth()
   const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user
   const botUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME as string | undefined
 
   if (checking) return <div className="boot-screen"><div className="brand-mark"><CarFront size={23} /></div><span>Hisob tekshirilmoqda</span></div>
   if (user) return <Outlet />
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError('')
-    setBusy(true)
-    try {
-      await authenticate(token)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Token tekshirilmadi. Bot orqali qayta urinib ko‘ring.')
-    } finally {
-      setBusy(false)
-    }
-  }
 
   return (
     <main className="auth-screen">
@@ -45,15 +29,10 @@ function AuthGate() {
         <h1>Shahar sizga yaqinroq.</h1>
         <p className="auth-copy">Yo‘lov toping, buyurtmani boshqaring va safaringizni bir joyda kuzating.</p>
         <div className="auth-route" aria-hidden="true"><span className="route-pin route-start" /><span className="route-line" /><span className="route-pin route-end" /><span className="route-label route-from">Toshkent</span><span className="route-label route-to">Samarqand</span></div>
-        <div className="auth-divider"><span>HISOBGA KIRISH</span></div>
-        {telegramUser && <p className="telegram-identity">Telegram: <strong>{telegramUser.first_name} {telegramUser.last_name ?? ''}</strong><br /><small>Telegram ID faqat ko‘rsatish uchun. Hisobni tasdiqlamaydi.</small></p>}
-        <form onSubmit={submit} className="auth-form">
-          <label htmlFor="api-token">Backend tokeni</label>
-          <input id="api-token" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" placeholder="Bot yoki administrator bergan token" required />
-          <p className="field-note"><ShieldCheck size={14} /> Token API orqali tekshiriladi. Telegram ID’dan token yaratilmaydi.</p>
-          {error && <p className="inline-error"><CircleAlert size={15} />{error}</p>}
-          <button className="button button-dark button-wide" disabled={busy}>{busy ? 'Tekshirilmoqda…' : 'Davom etish'} <ArrowRight size={17} /></button>
-        </form>
+        <div className="auth-divider"><span>TELEGRAM ORQALI KIRISH</span></div>
+        {telegramUser && <p className="telegram-identity">Telegram: <strong>{telegramUser.first_name} {telegramUser.last_name ?? ''}</strong><br /><small>Hisob Telegram imzolagan sessiya orqali tasdiqlanadi.</small></p>}
+        {authError && <p className="inline-error auth-error"><CircleAlert size={15} />{authError}</p>}
+        {window.Telegram?.WebApp?.initData ? <button className="button button-dark button-wide" onClick={() => void signInWithTelegram()}><ShieldCheck size={16} />Telegram bilan qayta kirish <ArrowRight size={17} /></button> : <div className="telegram-required"><ShieldCheck size={18} /><p><strong>Telegram Mini App’ni bot ichidan oching</strong><span>Tasdiqlangan Telegram sessiyasi avtomatik olinadi. Brauzer orqali qo‘lda kirish qo‘llanmaydi.</span></p></div>}
         <div className="bot-verification">
           <span className="bot-icon"><ShieldCheck size={19} /></span>
           <p><strong>Telefon raqami Telegram botda tasdiqlanadi</strong><span>Ilovada telefon raqamini qo‘lda kiritish yoki tasdiqlash mavjud emas.</span></p>

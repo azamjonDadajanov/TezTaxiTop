@@ -9,13 +9,13 @@ React, TypeScript and Vite client for the existing Django REST API. Passenger an
 3. Run `npm install` and `npm run dev` in `frontend/`.
 4. Open the Vite URL. The dev server proxies `/api` to Django; override `VITE_DJANGO_ORIGIN` if needed.
 
-In Telegram, configure the public HTTPS URL in the root `.env` as `TELEGRAM_WEBAPP_URL`. The bot displays an “Ilovani ochish” Web App button during first-time phone onboarding and in its normal role menu. Set `VITE_API_BASE_URL` to the deployed API base when hosting the built app separately.
+In Telegram, configure the public HTTPS URL in the root `.env` as `TELEGRAM_WEBAPP_URL`. The bot sets Telegram's persistent menu button and sends an inline Web App button on `/start`; inline launch supplies signed Mini App `initData`. Reply-keyboard Web App buttons are intentionally not used for login because that launch type may not provide signed user data. For Netlify, set `VITE_API_BASE_URL` to the public Django API URL ending in `/api/v1` and add the exact Netlify origin to Django's `CORS_ALLOWED_ORIGINS` (for example, `https://willowy-horse-e714d8.netlify.app`). CORS is allowlisted; do not use `*` in production.
 
-## Authentication boundary
+## Authentication
 
-The client reads Telegram Web App user data for display only. It does not treat the browser-provided Telegram ID or `initDataUnsafe` as proof of identity and never calls `/auth/register-telegram/` from the browser. That endpoint accepts a raw ID and is documented as safe only when the bot transport authenticates it.
+On launch, the client submits the raw `Telegram.WebApp.initData` string to `/api/v1/auth/telegram-mini-app/`. Django verifies Telegram's HMAC using the bot token, checks the `auth_date`, and only then creates/loads the account and returns its DRF token. `initDataUnsafe.user` is used only for display; the server never trusts it. The legacy `/auth/register-telegram/` path now requires the same signed `init_data` payload and no longer accepts a raw Telegram ID.
 
-The current backend has no Mini App `initData` verification/token-exchange endpoint, and the existing bot does not issue its DRF token to the Web App. Until a trusted backend exchange exists, an already-issued DRF token is required at the sign-in screen. Phone numbers are read-only in the client and must be shared with the Telegram bot using its contact request button.
+Phone numbers are read-only in the client and are not set by Mini App authentication. Users must share their contact through the Telegram bot's contact-request button.
 
 ## Build
 

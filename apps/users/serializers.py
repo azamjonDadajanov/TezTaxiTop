@@ -14,21 +14,10 @@ from apps.users.constants import UserRole
 from apps.users.models import DriverProfile, User
 
 
-class TelegramRegistrationSerializer(serializers.Serializer):
-    """Input of ``POST /api/v1/auth/register-telegram/``."""
+class TelegramMiniAppAuthSerializer(serializers.Serializer):
+    """Signed Telegram Web App initData submitted for backend verification."""
 
-    telegram_id = serializers.IntegerField(min_value=1)
-    username = serializers.CharField(max_length=150, required=False, allow_blank=True, allow_null=True)
-    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    phone_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    language_code = serializers.CharField(max_length=10, required=False, allow_blank=True)
-
-    def validate_telegram_id(self, value: int) -> int:
-        # Telegram ids are 32 bit unsigned; anything larger is a client error.
-        if value > 2_147_483_647:
-            raise serializers.ValidationError("Telegram ID 32 bitli butun son bo'lishi kerak.")
-        return value
+    init_data = serializers.CharField(max_length=8192, trim_whitespace=False)
 
 
 class DriverProfileSerializer(serializers.ModelSerializer):

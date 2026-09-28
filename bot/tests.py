@@ -21,13 +21,14 @@ from django.utils import timezone
 from apps.locations import services as location_services
 from apps.users.services import create_user
 from bot import dispatcher
-from bot.keyboards import main_menu_keyboard, order_actions_keyboard
+from bot.config import validate_telegram_webapp_url
+from bot.keyboards import main_menu_keyboard, mini_app_inline_keyboard, order_actions_keyboard
 from bot.handlers import menu as menu_handlers
 from bot.handlers.passenger import router as passenger_router
 from bot.handlers.registration import handle_unexpected_text, request_phone_number
-from bot.handlers.start import cmd_start
+from bot.handlers.start import cmd_start, send_mini_app_button
 from bot.middlewares.user import UserMiddleware
-from bot.main import configure_web_app_menu, create_dispatcher
+from bot.main import configure_web_app_menu, create_dispatcher, run_polling, run_webhook
 from bot.main import main as bot_main
 from bot.services import platform
 from bot.services import locations as bot_locations
@@ -131,19 +132,51 @@ class BotPackageTests(SimpleTestCase):
     def test_phone_keyboard_requests_contact(self) -> None:
         with patch("bot.keyboards.TELEGRAM_WEBAPP_URL", "https://mini.example.com"):
             keyboard = request_phone_number()
+            mini_app_keyboard = mini_app_inline_keyboard()
 
         self.assertTrue(keyboard.keyboard[0][0].request_contact)
-        self.assertEqual(keyboard.keyboard[1][0].web_app.url, "https://mini.example.com")
+        self.assertEqual(len(keyboard.keyboard), 1)
+        self.assertEqual(
+            mini_app_keyboard.inline_keyboard[0][0].web_app.url,
+            "https://mini.example.com",
+        )
 
-    def test_role_menus_include_mini_app_button_when_configured(self) -> None:
+    def test_role_reply_menus_do_not_launch_mini_app_without_init_data(self) -> None:
         with patch("bot.keyboards.TELEGRAM_WEBAPP_URL", "https://mini.example.com"):
             passenger_keyboard = main_menu_keyboard()
             driver_keyboard = main_menu_keyboard(is_driver=True)
+            mini_app_keyboard = mini_app_inline_keyboard()
 
         for keyboard in (passenger_keyboard, driver_keyboard):
-            button = keyboard.keyboard[0][0]
-            self.assertEqual(button.text, "🚕 Ilovani ochish")
-            self.assertEqual(button.web_app.url, "https://mini.example.com")
+            self.assertFalse(any(button.web_app for row in keyboard.keyboard for button in row))
+        button = mini_app_keyboard.inline_keyboard[0][0]
+        self.assertEqual(button.text, "🚕 TezTaxiTop ilovasini ochish")
+        self.assertEqual(button.web_app.url, "https://mini.example.com")
+
+    async def test_start_launch_button_uses_inline_web_app_markup(self) -> None:
+        message = SimpleNamespace(answer=AsyncMock())
+        keyboard = mini_app_inline_keyboard()
+        with patch("bot.handlers.start.mini_app_inline_keyboard", return_value=keyboard):
+            await send_mini_app_button(message)
+
+        message.answer.assert_awaited_once_with(
+            "TezTaxiTop Mini App:",
+            reply_markup=keyboard,
+        )
+
+    def test_web_app_url_rejects_http(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must start with https://"):
+            validate_telegram_webapp_url("http://mini.example.com/")
+
+    def test_web_app_url_requires_hostname(self) -> None:
+        with self.assertRaisesRegex(ValueError, "include a hostname"):
+            validate_telegram_webapp_url("https:///mini")
+
+    def test_web_app_url_accepts_https(self) -> None:
+        self.assertEqual(
+            validate_telegram_webapp_url("https://mini.example.com/"),
+            "https://mini.example.com/",
+        )
 
     async def test_persistent_menu_button_uses_configured_web_app_url(self) -> None:
         bot = SimpleNamespace(set_chat_menu_button=AsyncMock())
@@ -160,6 +193,52 @@ class BotPackageTests(SimpleTestCase):
             await configure_web_app_menu(bot)
 
         bot.set_chat_menu_button.assert_not_awaited()
+
+    async def test_persistent_menu_rejects_http_url_before_api_call(self) -> None:
+        bot = SimpleNamespace(set_chat_menu_button=AsyncMock())
+        with (
+            patch("bot.config.TELEGRAM_WEBAPP_URL", "http://mini.example.com/"),
+            self.assertRaisesRegex(ValueError, "must start with https://"),
+        ):
+            await configure_web_app_menu(bot)
+
+        bot.set_chat_menu_button.assert_not_awaited()
+
+    async def test_polling_closes_bot_session_when_menu_setup_fails(self) -> None:
+        session = SimpleNamespace(close=AsyncMock())
+        bot = SimpleNamespace(session=session)
+        dispatcher = SimpleNamespace(start_polling=AsyncMock())
+        with (
+            patch("bot.main._setup_django"),
+            patch("bot.main.create_dispatcher", return_value=(bot, dispatcher)),
+            patch(
+                "bot.main.configure_web_app_menu",
+                new=AsyncMock(side_effect=RuntimeError("menu setup failed")),
+            ),
+            self.assertRaisesRegex(RuntimeError, "menu setup failed"),
+        ):
+            await run_polling()
+
+        session.close.assert_awaited_once()
+        dispatcher.start_polling.assert_not_awaited()
+
+    async def test_webhook_closes_bot_session_when_menu_setup_fails(self) -> None:
+        session = SimpleNamespace(close=AsyncMock())
+        bot = SimpleNamespace(session=session)
+        dispatcher = SimpleNamespace()
+        with (
+            patch("bot.main._setup_django"),
+            patch("bot.main.create_dispatcher", return_value=(bot, dispatcher)),
+            patch("bot.config.WEBHOOK_URL", "https://bot.example.com"),
+            patch(
+                "bot.main.configure_web_app_menu",
+                new=AsyncMock(side_effect=RuntimeError("menu setup failed")),
+            ),
+            self.assertRaisesRegex(RuntimeError, "menu setup failed"),
+        ):
+            await run_webhook()
+
+        session.close.assert_awaited_once()
 
     def test_order_action_keyboard_matches_registered_callback_format(self) -> None:
         keyboard = order_actions_keyboard(17, "pending")

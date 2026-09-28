@@ -5,7 +5,8 @@ export type AuthContextValue = {
   user: User | null
   setUser: (user: User | null) => void
   checking: boolean
-  authenticate: (token: string) => Promise<User>
+  authError: string
+  signInWithTelegram: () => Promise<void>
   signOut: () => void
 }
 

@@ -6,17 +6,19 @@ from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.users import services as user_services
 from apps.users.serializers import (
-    TelegramRegistrationSerializer,
+    TelegramMiniAppAuthSerializer,
     UserRoleUpdateSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
 from apps.users.services import UserIsBlocked
+from apps.users.telegram_auth import InvalidTelegramInitData, validate_telegram_init_data
 
 
 @extend_schema_view(
@@ -50,13 +52,9 @@ def me(request):
 
 
 @extend_schema(
-    summary="Telegram orqali ro'yxatdan o'tish",
-    description=(
-        "Bot yoki Mini App uchun. `telegram_id` bo'yicha mavjud hisob qaytariladi, "
-        "yo'q bo'lsa yangi yaratiladi. Bot tokeni tekshiruvi transport qatlamida "
-        "amalga oshiriladi."
-    ),
-    request=TelegramRegistrationSerializer,
+    summary="Telegram Mini App orqali kirish",
+    description="Telegram imzolagan `initData` tekshiriladi; brauzerdagi Telegram ID hech qachon ishonchli deb olinmaydi.",
+    request=TelegramMiniAppAuthSerializer,
     responses={
         201: OpenApiResponse(UserSerializer, description="Yangi hisob yaratildi."),
         200: OpenApiResponse(UserSerializer, description="Mavjud hisob qaytarildi."),
@@ -65,19 +63,26 @@ def me(request):
 )
 @api_view(["POST"])
 @permission_classes([AllowAny])
-def register_telegram(request):
-    """Idempotent registration endpoint used by the Telegram layer."""
-    serializer = TelegramRegistrationSerializer(data=request.data)
+def telegram_mini_app_auth(request):
+    """Verify signed Mini App data and issue the account's DRF token."""
+    serializer = TelegramMiniAppAuthSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    from django.conf import settings
+
+    try:
+        telegram_user = validate_telegram_init_data(
+            serializer.validated_data["init_data"],
+            settings.TELEGRAM_BOT_TOKEN,
+        )
+    except InvalidTelegramInitData as error:
+        raise ValidationError({"init_data": str(error)}) from error
 
     user, created = user_services.get_or_create_user_from_telegram(
-        telegram_id=data["telegram_id"],
-        username=data.get("username"),
-        first_name=data.get("first_name", ""),
-        last_name=data.get("last_name", ""),
-        phone_number=data.get("phone_number", ""),
-        language_code=data.get("language_code"),
+        telegram_id=telegram_user["id"],
+        username=telegram_user.get("username"),
+        first_name=telegram_user.get("first_name", ""),
+        last_name=telegram_user.get("last_name", ""),
+        language_code=telegram_user.get("language_code"),
     )
     if user.is_blocked:
         raise UserIsBlocked()
@@ -89,6 +94,9 @@ def register_telegram(request):
         "is_new": created,
     }
     return Response(response_data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+register_telegram = telegram_mini_app_auth
 
 
 @extend_schema(

@@ -10,7 +10,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from bot.config import TELEGRAM_WEBAPP_URL
+from bot.config import TELEGRAM_WEBAPP_URL, validate_telegram_webapp_url
 
 
 def main_menu_keyboard(is_driver: bool = False) -> ReplyKeyboardMarkup:
@@ -32,9 +32,19 @@ def main_menu_keyboard(is_driver: bool = False) -> ReplyKeyboardMarkup:
                 [KeyboardButton(text="🆘 Qo'llab-quvvatlash")],
                 [KeyboardButton(text="🔄 Haydovchi bo'lish")],
             ]
-    if TELEGRAM_WEBAPP_URL:
-        rows.insert(0, [KeyboardButton(text="🚕 Ilovani ochish", web_app=WebAppInfo(url=TELEGRAM_WEBAPP_URL))])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def mini_app_inline_keyboard() -> InlineKeyboardMarkup | None:
+    """Build an inline Mini App launch button that receives signed initData."""
+    if not TELEGRAM_WEBAPP_URL:
+        return None
+    web_app_url = validate_telegram_webapp_url(TELEGRAM_WEBAPP_URL)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚕 TezTaxiTop ilovasini ochish", web_app=WebAppInfo(url=web_app_url))]
+        ]
+    )
 
 
 def back_keyboard() -> InlineKeyboardMarkup:
@@ -163,6 +173,4 @@ def location_keyboard() -> ReplyKeyboardMarkup:
 def contact_keyboard() -> ReplyKeyboardMarkup:
     """Build a keyboard that asks Telegram to share the user's contact."""
     rows = [[KeyboardButton(text="📱 Telefon raqamini yuborish", request_contact=True)]]
-    if TELEGRAM_WEBAPP_URL:
-        rows.append([KeyboardButton(text="🚕 Ilovani ochish", web_app=WebAppInfo(url=TELEGRAM_WEBAPP_URL))])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=True)
