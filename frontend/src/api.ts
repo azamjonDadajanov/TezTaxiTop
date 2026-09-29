@@ -34,6 +34,12 @@ function messageForStatus(status: number | undefined) {
   }
 }
 
+// Set on the shared instance so it applies to every request the SPA makes.
+// Skips the ngrok free-tier browser warning interstitial. Only needed while
+// VITE_API_BASE_URL points at an ngrok URL; harmless otherwise. Requires
+// CORS_ALLOW_HEADERS on the Django side to include this header.
+api.defaults.headers.common['ngrok-skip-browser-warning'] = '1'
+
 api.interceptors.response.use((response) => response, (error: unknown) => {
   if (axios.isAxiosError(error)) {
     // A proxy or SPA host answers 404 with HTML, so `data` is a string and has

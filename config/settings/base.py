@@ -47,6 +47,22 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-development-key-do-not-use-i
 DEBUG = env_bool("DEBUG", False)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")
+# `ngrok-skip-browser-warning` is sent by the Mini App frontend on every request
+# to bypass the ngrok free-tier abuse interstitial. Because it is a
+# non-safelisted header, the browser preflights the request, so Django must
+# explicitly allow it or the preflight is rejected before the real call.
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "ngrok-skip-browser-warning",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 
 # ---------------------------------------------------------------------------
 # Applications
