@@ -20,6 +20,8 @@ from apps.rides.constants import (
 from apps.rides.models import DriverTrip, DriverTripStatus, PassengerRequest, PassengerRequestStatus
 
 #: Fields the Django admin may search by (driver name, phone, plate, route).
+#: The ``from_*``/``to_*`` snapshot columns are searchable next to the
+#: catalogue FKs, so a map-picked route is findable by its address text.
 TRIP_SEARCH_FIELDS: Sequence[str] = (
     "id",
     "driver__user__first_name",
@@ -30,6 +32,12 @@ TRIP_SEARCH_FIELDS: Sequence[str] = (
     "vehicle__plate_number",
     "from_location__name",
     "to_location__name",
+    "from_address",
+    "to_address",
+    "from_place_name",
+    "to_place_name",
+    "from_city_name",
+    "to_city_name",
 )
 
 #: Fields the Django admin may order by.
@@ -51,6 +59,12 @@ REQUEST_SEARCH_FIELDS: Sequence[str] = (
     "passenger__telegram_id",
     "from_location__name",
     "to_location__name",
+    "from_address",
+    "to_address",
+    "from_place_name",
+    "to_place_name",
+    "from_city_name",
+    "to_city_name",
 )
 
 REQUEST_ORDERING_FIELDS: Sequence[str] = (
@@ -118,6 +132,12 @@ def search_trips(queryset: QuerySet[DriverTrip], search_term: str | None) -> Que
         | Q(vehicle__plate_number__icontains=term)
         | Q(from_location__name__icontains=term)
         | Q(to_location__name__icontains=term)
+        | Q(from_address__icontains=term)
+        | Q(to_address__icontains=term)
+        | Q(from_place_name__icontains=term)
+        | Q(to_place_name__icontains=term)
+        | Q(from_city_name__icontains=term)
+        | Q(to_city_name__icontains=term)
     )
 
 
@@ -142,12 +162,36 @@ def get_expired_trips_candidates(grace_minutes: int) -> QuerySet[DriverTrip]:
     )
 
 
+def build_route_filter(
+    *,
+    from_location_id: int | None,
+    to_location_id: int | None,
+    from_city_name: str = "",
+    to_city_name: str = "",
+) -> Q | None:
+    """The "same route" predicate shared by every matcher entry point.
+
+    Returns a ``Q`` for models that were resolved through the curated
+    catalogue, otherwise a ``Q`` on the geocoded snapshot city names. Returns
+    ``None`` when the route cannot be compared at all - two blank cities are
+    not evidence that two people want the same ride, so the caller must treat
+    ``None`` as "matches nothing" rather than as "matches everything".
+    """
+    if from_location_id is not None and to_location_id is not None:
+        return Q(from_location_id=from_location_id, to_location_id=to_location_id)
+    if from_city_name and to_city_name:
+        return Q(from_city_name=from_city_name, to_city_name=to_city_name)
+    return None
+
+
 def get_trip_candidates_for_matching(
     *,
-    from_location_id: int,
-    to_location_id: int,
+    from_location_id: int | None,
+    to_location_id: int | None,
     seats: int,
     not_before: datetime,
+    from_city_name: str = "",
+    to_city_name: str = "",
 ) -> QuerySet[DriverTrip]:
     """Pre-filtered candidate set handed to the deterministic scorer.
 
@@ -156,8 +200,20 @@ def get_trip_candidates_for_matching(
     * the trip must be bookable (active + free seats),
     * it must depart after ``not_before`` minus the grace period,
     * it must have at least ``seats`` free seats.
+
+    See :func:`build_route_filter` for why the route is matched on either the
+    catalogue FKs or the snapshot city names.
     """
     from apps.core import conf
+
+    route_filter = build_route_filter(
+        from_location_id=from_location_id,
+        to_location_id=to_location_id,
+        from_city_name=from_city_name,
+        to_city_name=to_city_name,
+    )
+    if route_filter is None:
+        return get_trip_queryset().none()
 
     grace = timedelta(minutes=conf.TRIP_DEPARTURE_GRACE_MINUTES)
     return (
@@ -165,7 +221,7 @@ def get_trip_candidates_for_matching(
         .bookable()
         .with_seats(seats)
         .filter(departure_time__gte=not_before - grace)
-        .filter(from_location_id=from_location_id, to_location_id=to_location_id)
+        .filter(route_filter)
     )
 
 
@@ -222,6 +278,12 @@ def search_requests(queryset: QuerySet[PassengerRequest], search_term: str | Non
         | Q(passenger__telegram_id__icontains=term.replace("+", ""))
         | Q(from_location__name__icontains=term)
         | Q(to_location__name__icontains=term)
+        | Q(from_address__icontains=term)
+        | Q(to_address__icontains=term)
+        | Q(from_place_name__icontains=term)
+        | Q(to_place_name__icontains=term)
+        | Q(from_city_name__icontains=term)
+        | Q(to_city_name__icontains=term)
     )
 
 

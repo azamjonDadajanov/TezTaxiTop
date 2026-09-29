@@ -18,7 +18,83 @@ class TripLocationSerializer(serializers.Serializer):
     longitude = serializers.DecimalField(max_digits=9, decimal_places=6, read_only=True, coerce_to_string=False)
 
 
-class DriverTripSerializer(serializers.ModelSerializer):
+class RouteEndpointSerializer(serializers.Serializer):
+    """Unified view of one route endpoint.
+
+    A trip endpoint is either a curated catalogue ``Location`` or a
+    geocoded snapshot (or both, when a driver picked a catalogue place and the
+    client also sent coordinates). The client only ever has to read this one
+    block: ``id`` is ``null`` for map-picked endpoints and the ``latitude`` /
+    ``longitude`` / ``*_name`` fields are always populated from the snapshot,
+    so a passenger and a driver rendering the same trip always agree.
+    """
+
+    id = serializers.IntegerField(read_only=True, allow_null=True)
+    display = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    address = serializers.CharField(read_only=True)
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6, read_only=True, coerce_to_string=False)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6, read_only=True, coerce_to_string=False)
+    region_name = serializers.CharField(read_only=True)
+    city_name = serializers.CharField(read_only=True)
+    district_name = serializers.CharField(read_only=True)
+    is_catalogue_place = serializers.BooleanField(read_only=True)
+
+
+class RouteEndpointMixinSerializer(serializers.Serializer):
+    """Adds ``origin`` / ``destination`` to a trip or request representation."""
+
+    origin = serializers.SerializerMethodField()
+    destination = serializers.SerializerMethodField()
+
+    def get_origin(self, obj) -> dict:
+        return _endpoint_payload(obj, "from")
+
+    def get_destination(self, obj) -> dict:
+        return _endpoint_payload(obj, "to")
+
+
+def _endpoint_payload(obj, prefix: str) -> dict:
+    """Flatten ``from_*`` / ``to_*`` for the API, preferring catalogue data."""
+    fk_id = getattr(obj, f"{prefix}_location_id", None)
+    snapshot_address = getattr(obj, f"{prefix}_address", "") or ""
+    snapshot_name = getattr(obj, f"{prefix}_place_name", "") or ""
+    region_name = getattr(obj, f"{prefix}_region_name", "") or ""
+    city_name = getattr(obj, f"{prefix}_city_name", "") or ""
+    district_name = getattr(obj, f"{prefix}_district_name", "") or ""
+
+    if fk_id is not None:
+        fk = getattr(obj, f"{prefix}_location", None)
+        if fk is not None:
+            return {
+                "id": fk.pk,
+                "display": fk.full_name,
+                "name": fk.name,
+                "address": fk.address or snapshot_address,
+                "latitude": fk.latitude,
+                "longitude": fk.longitude,
+                "region_name": region_name or fk.district.region.name,
+                "city_name": city_name or fk.district.name,
+                "district_name": district_name or fk.district.name,
+                "is_catalogue_place": True,
+            }
+
+    admin = ", ".join(dict.fromkeys(part for part in (region_name, city_name, district_name) if part))
+    return {
+        "id": None,
+        "display": snapshot_address or snapshot_name or admin or "Aniqlanmagan nuqta",
+        "name": snapshot_name or city_name,
+        "address": snapshot_address,
+        "latitude": getattr(obj, f"{prefix}_latitude", None),
+        "longitude": getattr(obj, f"{prefix}_longitude", None),
+        "region_name": region_name,
+        "city_name": city_name,
+        "district_name": district_name,
+        "is_catalogue_place": False,
+    }
+
+
+class DriverTripSerializer(RouteEndpointMixinSerializer, serializers.ModelSerializer):
     """Full read representation of a trip."""
 
     driver_name = serializers.CharField(source="driver.user.display_name", read_only=True)
@@ -35,6 +111,8 @@ class DriverTripSerializer(serializers.ModelSerializer):
     booked_seats = serializers.IntegerField(read_only=True)
     has_available_seats = serializers.BooleanField(read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    origin_display = serializers.CharField(read_only=True)
+    destination_display = serializers.CharField(read_only=True)
 
     class Meta:
         model = DriverTrip
@@ -50,6 +128,10 @@ class DriverTripSerializer(serializers.ModelSerializer):
             "vehicle_model",
             "from_location",
             "to_location",
+            "origin",
+            "destination",
+            "origin_display",
+            "destination_display",
             "from_location_detail",
             "to_location_detail",
             "departure_time",
@@ -67,12 +149,116 @@ class DriverTripSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class DriverTripWriteSerializer(serializers.ModelSerializer):
+class RoutePointWriteSerializer(serializers.Serializer):
+    """Write payload for one route endpoint.
+
+    The client may send **either** ``from_location`` / ``to_location`` (a
+    curated catalogue id) **or** this nested block with the raw coordinates.
+    The text fields are optional: when they are omitted the backend
+    reverse-geocodes through 2GIS so that the passenger and the driver end up
+    reading byte-identical strings.
+    """
+
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True, coerce_to_string=False
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, required=False, allow_null=True, coerce_to_string=False
+    )
+    address = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    place_name = serializers.CharField(required=False, allow_blank=True, max_length=180)
+    region_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    city_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    district_name = serializers.CharField(required=False, allow_blank=True, max_length=120)
+
+    def validate(self, attrs: dict) -> dict:
+        from apps.core.validators import validate_latitude, validate_longitude
+
+        has_lat = attrs.get("latitude") is not None
+        has_lng = attrs.get("longitude") is not None
+        if has_lat != has_lng:
+            raise serializers.ValidationError(
+                {"latitude": "Kenglik va uzunlik birga kiritilishi kerak."}
+            )
+        if has_lat:
+            validate_latitude(attrs["latitude"])
+            validate_longitude(attrs["longitude"])
+        return attrs
+
+
+class RouteEndpointWriteMixin:
+    """Shared validation for the trip and request write serializers."""
+
+    #: Maps the nested write key onto the ``build_point_snapshot`` prefix.
+    endpoint_fields = {
+        "origin": ("from_location", "from"),
+        "destination": ("to_location", "to"),
+    }
+
+    def _resolve_endpoints(self, attrs: dict) -> dict:
+        """Turn nested ``origin``/``destination`` blocks into service kwargs.
+
+        The nested keys are already named exactly like
+        :func:`apps.locations.services.build_point_snapshot`'s keyword
+        arguments, so the dict is forwarded with ``**`` and the snapshot prefix
+        is added back by the service.
+        """
+        for write_key, (location_field, _prefix) in self.endpoint_fields.items():
+            point = attrs.get(write_key)
+            if point is None:
+                # A PATCH does not have to repeat the endpoints it is not
+                # touching; only a create does.
+                if not self.partial and attrs.get(location_field) is None:
+                    raise serializers.ValidationError(
+                        {
+                            write_key: (
+                                "Xaritada nuqta tanlang yoki katalogdagi manzilni "
+                                "tanlang (location_id)."
+                            )
+                        }
+                    )
+                continue
+            attrs[write_key] = dict(point)
+
+        self._assert_endpoints_differ(attrs)
+        return attrs
+
+    def _assert_endpoints_differ(self, attrs: dict) -> None:
+        from_location = attrs.get("from_location")
+        to_location = attrs.get("to_location")
+        if (
+            from_location is not None
+            and to_location is not None
+            and from_location.pk == to_location.pk
+        ):
+            raise serializers.ValidationError(
+                {"destination": "Qayerdan va qayerga bir xil bo'lishi mumkin emas."}
+            )
+
+        origin = attrs.get("origin")
+        destination = attrs.get("destination")
+        if not origin or not destination:
+            return
+        if origin.get("latitude") is None or destination.get("latitude") is None:
+            return
+        if (
+            origin.get("latitude") == destination.get("latitude")
+            and origin.get("longitude") == destination.get("longitude")
+        ):
+            raise serializers.ValidationError(
+                {"destination": "Qayerdan va qayerga bir xil bo'lishi mumkin emas."}
+            )
+
+
+class DriverTripWriteSerializer(RouteEndpointWriteMixin, serializers.ModelSerializer):
     """Payload used to create or update a trip.
 
     ``available_seats`` is intentionally read-only: it is maintained by the
     service layer through seat reservations.
     """
+
+    origin = RoutePointWriteSerializer(required=False, allow_null=True)
+    destination = RoutePointWriteSerializer(required=False, allow_null=True)
 
     class Meta:
         model = DriverTrip
@@ -80,6 +266,8 @@ class DriverTripWriteSerializer(serializers.ModelSerializer):
             "vehicle",
             "from_location",
             "to_location",
+            "origin",
+            "destination",
             "departure_time",
             "total_seats",
             "price_per_seat",
@@ -87,8 +275,8 @@ class DriverTripWriteSerializer(serializers.ModelSerializer):
         )
         extra_kwargs = {
             "vehicle": {"required": True},
-            "from_location": {"required": True},
-            "to_location": {"required": True},
+            "from_location": {"required": False, "allow_null": True},
+            "to_location": {"required": False, "allow_null": True},
             "departure_time": {"required": True},
             "total_seats": {"required": True, "min_value": 1},
             "price_per_seat": {"required": True, "min_value": 0},
@@ -96,16 +284,10 @@ class DriverTripWriteSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        from_location = attrs.get("from_location")
-        to_location = attrs.get("to_location")
-        if from_location and to_location and from_location.pk == to_location.pk:
-            raise serializers.ValidationError(
-                {"to_location": "Qayerdan va qayerga bir xil bo'lishi mumkin emas."}
-            )
-        return attrs
+        return self._resolve_endpoints(attrs)
 
 
-class PassengerRequestSerializer(serializers.ModelSerializer):
+class PassengerRequestSerializer(RouteEndpointMixinSerializer, serializers.ModelSerializer):
     """Full read representation of a passenger request."""
 
     passenger_name = serializers.CharField(source="passenger.display_name", read_only=True)
@@ -113,6 +295,8 @@ class PassengerRequestSerializer(serializers.ModelSerializer):
     from_location_detail = TripLocationSerializer(source="from_location", read_only=True)
     to_location_detail = TripLocationSerializer(source="to_location", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    origin_display = serializers.CharField(read_only=True)
+    destination_display = serializers.CharField(read_only=True)
 
     class Meta:
         model = PassengerRequest
@@ -123,6 +307,10 @@ class PassengerRequestSerializer(serializers.ModelSerializer):
             "passenger_phone",
             "from_location",
             "to_location",
+            "origin",
+            "destination",
+            "origin_display",
+            "destination_display",
             "from_location_detail",
             "to_location_detail",
             "passenger_count",
@@ -138,12 +326,17 @@ class PassengerRequestSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class PassengerRequestWriteSerializer(serializers.ModelSerializer):
+class PassengerRequestWriteSerializer(RouteEndpointWriteMixin, serializers.ModelSerializer):
+    origin = RoutePointWriteSerializer(required=False, allow_null=True)
+    destination = RoutePointWriteSerializer(required=False, allow_null=True)
+
     class Meta:
         model = PassengerRequest
         fields = (
             "from_location",
             "to_location",
+            "origin",
+            "destination",
             "passenger_count",
             "max_price_per_seat",
             "departure_from",
@@ -151,8 +344,8 @@ class PassengerRequestWriteSerializer(serializers.ModelSerializer):
             "comment",
         )
         extra_kwargs = {
-            "from_location": {"required": True},
-            "to_location": {"required": True},
+            "from_location": {"required": False, "allow_null": True},
+            "to_location": {"required": False, "allow_null": True},
             "passenger_count": {"required": False, "default": 1, "min_value": 1},
             "max_price_per_seat": {"required": False, "allow_null": True, "min_value": 0},
             "departure_from": {"required": False},
@@ -161,12 +354,7 @@ class PassengerRequestWriteSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        from_location = attrs.get("from_location")
-        to_location = attrs.get("to_location")
-        if from_location and to_location and from_location.pk == to_location.pk:
-            raise serializers.ValidationError(
-                {"to_location": "Qayerdan va qayerga bir xil bo'lishi mumkin emas."}
-            )
+        attrs = self._resolve_endpoints(attrs)
         departure_from = attrs.get("departure_from")
         departure_until = attrs.get("departure_until")
         if departure_from and departure_until and departure_until <= departure_from:

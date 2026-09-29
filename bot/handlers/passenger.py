@@ -293,7 +293,7 @@ async def show_my_requests(message: Message, user_id: int | None = None) -> None
     text = "📋 <b>Mening so'rovlarim:</b>\n\n"
     for req in requests:
         text += (
-            f"#{req.id}: {req.from_location.name} → {req.to_location.name}\n"
+            f"#{req.id}: {req.origin_display} → {req.destination_display}\n"
             f"   👥 {req.passenger_count} kishi | 📅 {req.departure_from:%d.%m %H:%M}\n"
             f"   📊 {req.get_status_display()}\n\n"
         )

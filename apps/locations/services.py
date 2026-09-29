@@ -211,6 +211,126 @@ def resolve_location_by_text(search_term: str) -> Location | None:
     return next(iter(candidates), None)
 
 
+# ---------------------------------------------------------------------------
+# Route endpoint snapshots (2GIS)
+# ---------------------------------------------------------------------------
+def build_point_snapshot(
+    prefix: str,
+    *,
+    location: Location | None = None,
+    latitude: Decimal | float | str | None = None,
+    longitude: Decimal | float | str | None = None,
+    address: str = "",
+    place_name: str = "",
+    region_name: str = "",
+    city_name: str = "",
+    district_name: str = "",
+    allow_network: bool = True,
+) -> dict[str, object]:
+    """Resolve one route endpoint into the seven ``{prefix}_*`` column values.
+
+    Precedence, highest first:
+
+    1. **Catalogue ``Location``** - coordinates and hierarchy come straight from
+       the curated row. No network call is made.
+    2. **Explicit coordinates** - the text half is reverse geocoded through
+       2GIS so that the passenger and the driver read identical strings.
+    3. **Already-supplied text** - used verbatim, without a network call, which
+       is what makes offline drafts and re-saves cheap.
+
+    A 2GIS outage is deliberately *not* fatal: the coordinates are still valid
+    and the ride can still be published, so the failure is logged and the text
+    half is left empty. :func:`apps.rides.serializers` surfaces the empty text so
+    the UI can ask the user to type the address.
+
+    Only resolved columns are returned (see :func:`_put`), so a partial update
+    merges cleanly instead of blanking fields the client did not resend.
+
+    Raises :class:`BusinessValidationError` when neither a catalogue location
+    nor a usable coordinate pair was given - a trip with no resolvable endpoint
+    must not be created, and a bare address string cannot be mapped or geocoded.
+    """
+    from apps.core.exceptions import BusinessError
+    from apps.locations import two_gis
+
+    def _put(column: str, value) -> None:
+        """Store a column only when it actually carries a value.
+
+        Returning sparse columns (rather than every column with ``""``/``None``)
+        is what makes partial updates safe: ``update_trip`` merges this dict into
+        the row, so an omitted key leaves the stored value alone instead of
+        blanking the address or dropping the coordinates.
+        """
+        if value is None:
+            return
+        text = str(value).strip()
+        if not text:
+            return
+        snapshot[f"{prefix}_{column}"] = value
+
+    snapshot: dict[str, object] = {}
+
+    if location is not None:
+        # 1. curated catalogue place
+        _put("latitude", location.latitude)
+        _put("longitude", location.longitude)
+        _put("address", address.strip() or location.address)
+        _put("place_name", place_name.strip() or location.name)
+        _put("region_name", region_name.strip() or location.district.region.name)
+        _put("city_name", city_name.strip() or location.district.name)
+        _put("district_name", district_name.strip() or location.district.name)
+        return snapshot
+
+    has_lat = latitude is not None and str(latitude) != ""
+    has_lng = longitude is not None and str(longitude) != ""
+    if has_lat != has_lng:
+        raise BusinessValidationError(
+            "Kenglik va uzunlik birga kiritilishi kerak (ikkalasi ham, yoki hech biri)."
+        )
+    if not has_lat:
+        # 2. text-only: the client already resolved the hierarchy itself.
+        #
+        # This is NOT enough to identify a point - an address string cannot be
+        # drawn on a map, geocoded later, or compared with another trip's route.
+        # The database enforces the same rule (``*_endpoint_resolved``), so
+        # reject it here where the user can be told why.
+        _put("address", address)
+        _put("place_name", place_name)
+        _put("region_name", region_name)
+        _put("city_name", city_name)
+        _put("district_name", district_name)
+        raise BusinessValidationError(
+            "Manzil topilmadi. Xaritadan nuqta tanlang yoki kenglik/uzunlikni yuboring."
+        )
+
+    # 3. raw coordinates - reverse geocode for the text half.
+    snapshot[f"{prefix}_latitude"] = _to_decimal(latitude)
+    snapshot[f"{prefix}_longitude"] = _to_decimal(longitude)
+    _put("address", address)
+    _put("place_name", place_name)
+    _put("region_name", region_name)
+    _put("city_name", city_name)
+    _put("district_name", district_name)
+
+    already_resolved = any(
+        snapshot.get(f"{prefix}_{field}")
+        for field in ("address", "place_name", "city_name", "district_name")
+    )
+    if allow_network and not already_resolved:
+        try:
+            place = two_gis.reverse_geocode(latitude, longitude)
+        except BusinessError as exc:
+            # Coordinates stay valid; the ride is still bookable.
+            logger.warning("2GIS reverse geocode muvaffaqiyatsiz (%s): %s", exc.code, exc.message)
+        else:
+            _put("address", place.display_name)
+            _put("place_name", place.short_name)
+            _put("region_name", place.region_name)
+            _put("city_name", place.city_name)
+            _put("district_name", place.district_name)
+    return snapshot
+
+
 def list_active_regions() -> list[Region]:
     return list(get_regions().filter(is_active=True))
 

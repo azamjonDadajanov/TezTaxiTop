@@ -6,6 +6,8 @@ only, because it is a shared reference data set.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -17,11 +19,13 @@ from apps.core.exceptions import BusinessValidationError
 from apps.core.permissions import IsAdminOrReadOnly
 from apps.locations import selectors as location_selectors
 from apps.locations import services as location_services
+from apps.locations import two_gis
 from apps.locations.serializers import (
     DistrictSerializer,
     LocationSerializer,
     LocationWriteSerializer,
     RegionSerializer,
+    ResolvedPlaceSerializer,
 )
 
 
@@ -180,3 +184,101 @@ class LocationViewSet(viewsets.ModelViewSet):
         except BusinessValidationError as exc:
             raise DRFValidationError({"detail": exc.message}) from exc
         return Response(LocationSerializer(location).data)
+
+
+def _query_coordinate(request, name: str) -> Decimal | None:
+    """Read and range-check one coordinate from the query string."""
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        value = Decimal(raw)
+    except (ArithmeticError, ValueError) as exc:
+        raise DRFValidationError({name: "Raqamli koordinata kiriting."}) from exc
+    if name == "lat" and not (Decimal("-90") <= value <= Decimal("90")):
+        raise DRFValidationError({"lat": "Kenglik -90 va 90 orasida bo'lishi kerak."})
+    if name == "lon" and not (Decimal("-180") <= value <= Decimal("180")):
+        raise DRFValidationError({"lon": "Uzunlik -180 va 180 orasida bo'lishi kerak."})
+    return value
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="2GIS orqali manzil qidirish (forward geocoding)",
+        description=(
+            "Erkin matn bo'yicha qidiruv. `lat`/`lon` berilsa natija foydalanuvchi "
+            "joylashuviga yaqinlashtiriladi va `TWOGIS_REGION_ID` sozlanmasidan "
+            "mustaqil ishlaydi."
+        ),
+        parameters=[
+            OpenApiParameter("q", str, required=True, description="Masalan: Amir Temur ko'chasi 12"),
+            OpenApiParameter("lat", float, description="Foydalanuvchi kengligi (-90..90)"),
+            OpenApiParameter("lon", float, description="Foydalanuvchi uzunligi (-180..180)"),
+            OpenApiParameter("limit", int, description="Natijalar soni (1..50, default 10)"),
+        ],
+        responses={200: ResolvedPlaceSerializer(many=True)},
+    ),
+    reverse=extend_schema(
+        summary="Koordinatadan manzil aniqlash (reverse geocoding)",
+        description=(
+            "GPS yoki xarita koordinatini manzil va administrativ ierarxiyaga "
+            "(viloyat / shahar / tuman) aylantiradi. Bu natija tripga nusxalanadi, "
+            "shuning uchun yo'lovchi va haydovchi bir xil matnni ko'radi."
+        ),
+        parameters=[
+            OpenApiParameter("lat", float, required=True),
+            OpenApiParameter("lon", float, required=True),
+            OpenApiParameter("radius", int, description="Qidiruv radiusi, metr (default 300)"),
+        ],
+        responses={200: ResolvedPlaceSerializer},
+    ),
+)
+class GeoViewSet(viewsets.ViewSet):
+    """Read-only 2GIS proxy.
+
+    The browser never talks to 2GIS directly: keeping the API key on the server
+    means it cannot be extracted from the Mini App bundle, and it lets the
+    backend cache responses for a day (coordinates do not move).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request) -> Response:
+        query = (request.query_params.get("q") or "").strip()
+        if not query:
+            raise DRFValidationError({"q": "Qidiruv so'rovi (q) majburiy."})
+
+        try:
+            limit = int(request.query_params.get("limit", 10))
+        except ValueError as exc:
+            raise DRFValidationError({"limit": "Butun son kiriting."}) from exc
+
+        latitude = _query_coordinate(request, "lat")
+        longitude = _query_coordinate(request, "lon")
+        near = None
+        if latitude is not None and longitude is not None:
+            # 2GIS expects "lon, lat" ordering for the geographic parameters.
+            near = (longitude, latitude)
+        elif latitude is not None or longitude is not None:
+            raise DRFValidationError({"detail": "lat va lon birga kiritilishi kerak."})
+
+        places = two_gis.search_places(query, near=near, limit=limit)
+        return Response(ResolvedPlaceSerializer(places, many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def reverse(self, request) -> Response:
+        latitude = _query_coordinate(request, "lat")
+        longitude = _query_coordinate(request, "lon")
+        if latitude is None or longitude is None:
+            raise DRFValidationError({"detail": "lat va lon majburiy."})
+
+        radius = request.query_params.get("radius")
+        radius_m = None
+        if radius:
+            try:
+                radius_m = int(radius)
+            except ValueError as exc:
+                raise DRFValidationError({"radius": "Butun son kiriting."}) from exc
+
+        place = two_gis.reverse_geocode(latitude, longitude, radius_m=radius_m)
+        return Response(ResolvedPlaceSerializer(place).data)

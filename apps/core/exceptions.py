@@ -331,6 +331,39 @@ class SupportTicketClosed(TicketClosed):
 
 
 # ---------------------------------------------------------------------------
+# Geo / 2GIS Places API
+# ---------------------------------------------------------------------------
+class GeoProviderNotConfigured(BusinessError):
+    """The 2GIS API key (or project region id) is missing from the settings."""
+
+    code = "geo_provider_not_configured"
+    status_code = 503
+    default_message = "Xarita xizmati sozlanmagan. Iltimos, keyinroq urinib ko'ring."
+
+
+class GeoProviderUnavailable(BusinessError):
+    """2GIS was reachable in principle but did not answer usefully.
+
+    Raised on transport errors, non-200 responses, malformed payloads and rate
+    limits. Callers should degrade gracefully (for example: accept the raw
+    coordinates and let the user type the address) instead of failing the whole
+    trip submission.
+    """
+
+    code = "geo_provider_unavailable"
+    status_code = 502
+    default_message = "Xarita xizmatiga ulanib bo'lmadi. Iltimos, qayta urinib ko'ring."
+
+
+class PlaceNotResolved(BusinessError):
+    """Coordinates could not be translated into an address / administrative area."""
+
+    code = "place_not_resolved"
+    status_code = 422
+    default_message = "Bu nuqtani manzilga aniqlab bo'lmadi. Manzilni qo'lda kiriting."
+
+
+# ---------------------------------------------------------------------------
 # Matching
 # ---------------------------------------------------------------------------
 class NoMatchingTrips(BusinessError):
@@ -354,6 +387,8 @@ __all__ = [
     "DriverCannotBookOwnTrip",
     "DriverNotVerified",
     "DuplicateReview",
+    "GeoProviderNotConfigured",
+    "GeoProviderUnavailable",
     "InsufficientSeats",
     "InvalidOrderState",
     "InvalidOrderTransition",
@@ -372,6 +407,7 @@ __all__ = [
     "PaymentNotFound",
     "PaymentProviderNotConfigured",
     "PaymentVerificationFailed",
+    "PlaceNotResolved",
     "ResourceNotFound",
     "ReviewNotAllowed",
     "SubscriptionNotFound",

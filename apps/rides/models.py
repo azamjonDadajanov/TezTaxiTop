@@ -25,6 +25,15 @@ Design decisions
       ``[from, until)`` and are checked by a database constraint.
     * ``max_price_per_seat`` is nullable: "no price limit" is a valid business
       statement.
+
+Route endpoints (both models)
+----------------------------
+``from_location`` / ``to_location`` point at the curated catalogue and are
+**optional**. A route endpoint is resolved either through the catalogue or
+through raw coordinates plus a 2GIS snapshot (``from_latitude`` ... supplied by
+``OriginPointSnapshot`` / ``DestinationPointSnapshot``). A database constraint
+``*_endpoint_resolved`` guarantees that at least one of the two is present, so
+a trip can never be created without a usable origin or destination.
 """
 
 from __future__ import annotations
@@ -36,6 +45,11 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.models import TimeStampedModel
+from apps.locations.models import (
+    DestinationPointSnapshot,
+    OriginPointSnapshot,
+    point_pair_constraints,
+)
 from apps.rides.constants import (
     MAX_SEATS_PER_TRIP,
     MONEY_DECIMAL_PLACES,
@@ -84,7 +98,64 @@ class DriverTripQuerySet(models.QuerySet):
         )
 
 
-class DriverTrip(TimeStampedModel):
+class RouteEndpointMixin:
+    """NULL-safe display helpers for the two route endpoints.
+
+    Every concrete user of this mixin also inherits
+    :class:`~apps.locations.models.OriginPointSnapshot` and
+    :class:`~apps.locations.models.DestinationPointSnapshot`, so the snapshot
+    attributes referenced here always exist.
+    """
+
+    #: Shown when neither the catalogue nor the snapshot carries any text.
+    UNRESOLVED_LABEL = "Aniqlanmagan nuqta"
+
+    def _endpoint_display(self, *, fk, address: str, place_name: str, admin: str) -> str:
+        """Prefer the curated catalogue, fall back to the geocoded snapshot.
+
+        ``fk`` is the already-loaded related object (or ``None``); callers pass
+        the instance so a ``select_related`` query in the selector layer is
+        reused instead of triggering one here.
+        """
+        if fk is not None:
+            return fk.full_name
+        label = address or place_name or admin
+        return label or self.UNRESOLVED_LABEL
+
+    @property
+    def origin_display(self) -> str:
+        return self._endpoint_display(
+            fk=self.from_location if self.from_location_id else None,
+            address=self.from_address,
+            place_name=self.from_place_name,
+            admin=", ".join(
+                dict.fromkeys(
+                    part for part in (self.from_region_name, self.from_city_name, self.from_district_name) if part
+                )
+            ),
+        )
+
+    @property
+    def destination_display(self) -> str:
+        return self._endpoint_display(
+            fk=self.to_location if self.to_location_id else None,
+            address=self.to_address,
+            place_name=self.to_place_name,
+            admin=", ".join(
+                dict.fromkeys(
+                    part for part in (self.to_region_name, self.to_city_name, self.to_district_name) if part
+                )
+            ),
+        )
+
+    def has_origin_coordinates(self) -> bool:
+        return self.from_latitude is not None and self.from_longitude is not None
+
+    def has_destination_coordinates(self) -> bool:
+        return self.to_latitude is not None and self.to_longitude is not None
+
+
+class DriverTrip(RouteEndpointMixin, OriginPointSnapshot, DestinationPointSnapshot, TimeStampedModel):
     """A published ride: one driver, one vehicle, one route, N seats."""
 
     driver = models.ForeignKey(
@@ -106,12 +177,18 @@ class DriverTrip(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="trips_as_origin",
         verbose_name="Qayerdan",
+        null=True,
+        blank=True,
+        help_text="Katalogdagi tayyor manzil. Xaritada belgilangan nuqta uchun bo'sh qoldiriladi.",
     )
     to_location = models.ForeignKey(
         "locations.Location",
         on_delete=models.PROTECT,
         related_name="trips_as_destination",
         verbose_name="Qayerga",
+        null=True,
+        blank=True,
+        help_text="Katalogdagi tayyor manzil. Xaritada belgilangan nuqta uchun bo'sh qoldiriladi.",
     )
     departure_time = models.DateTimeField(
         verbose_name="Chuqish vaqti",
@@ -158,6 +235,9 @@ class DriverTrip(TimeStampedModel):
             models.Index(fields=("status", "departure_time"), name="trip_status_departure_idx"),
             models.Index(fields=("from_location", "to_location"), name="trip_route_idx"),
             models.Index(fields=("driver", "-created_at"), name="trip_driver_created_idx"),
+            # Geocoded routes are matched on the snapshot city names, because
+            # the catalogue FKs are optional.
+            models.Index(fields=("from_city_name", "to_city_name"), name="trip_snapshot_cities_idx"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -178,20 +258,43 @@ class DriverTrip(TimeStampedModel):
             ),
             # A pickup point and a dropoff point can never be the same row.
             # The comparison uses the raw ``*_id`` columns on purpose: a check
-            # constraint may not span a JOIN.
+            # constraint may not span a JOIN. When either side is NULL the
+            # expression is NULL, which PostgreSQL accepts as "satisfied" -
+            # which is correct, because the snapshot columns take over.
             models.CheckConstraint(
                 condition=~models.Q(from_location_id=models.F("to_location_id")),
                 name="trip_locations_must_differ",
             ),
+            # At least one of "catalogue FK" or "coordinates" must be present,
+            # otherwise the trip has no origin at all.
+            models.CheckConstraint(
+                condition=models.Q(from_location_id__isnull=False)
+                | (models.Q(from_latitude__isnull=False) & models.Q(from_longitude__isnull=False)),
+                name="trip_origin_endpoint_resolved",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(to_location_id__isnull=False)
+                | (models.Q(to_latitude__isnull=False) & models.Q(to_longitude__isnull=False)),
+                name="trip_destination_endpoint_resolved",
+            ),
+            *point_pair_constraints("from", name_prefix="trip"),
+            *point_pair_constraints("to", name_prefix="trip"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.from_location.name} -> {self.to_location.name} ({self.departure_time:%Y-%m-%d %H:%M})"
+        return f"{self.origin_display} -> {self.destination_display} ({self.departure_time:%Y-%m-%d %H:%M})"
 
     def clean(self) -> None:
         super().clean()
         if self.from_location_id and self.from_location_id == self.to_location_id:
             raise ValidationError({"to_location": _("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")})
+        if self.has_origin_coordinates() and self.has_destination_coordinates():
+            same_point = (
+                self.from_latitude == self.to_latitude
+                and self.from_longitude == self.to_longitude
+            )
+            if same_point:
+                raise ValidationError({"to_location": _("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")})
         if self.driver_id and self.vehicle_id and self.vehicle.driver_id != self.driver_id:
             raise ValidationError({"vehicle": _("Avtomobil tanlangan haydovchining emas.")})
         if self.vehicle_id and self.total_seats and self.total_seats > self.vehicle.seats_for_passengers:
@@ -230,10 +333,10 @@ class DriverTrip(TimeStampedModel):
         return self.status == DriverTripStatus.ACTIVE and self.available_seats > 0
 
     def route_label(self) -> str:
-        return f"{self.from_location.name} -> {self.to_location.name}"
+        return f"{self.origin_display} -> {self.destination_display}"
 
 
-class PassengerRequest(TimeStampedModel):
+class PassengerRequest(RouteEndpointMixin, OriginPointSnapshot, DestinationPointSnapshot, TimeStampedModel):
     """A passenger's "I need a ride from A to B" broadcast."""
 
     passenger = models.ForeignKey(
@@ -247,12 +350,18 @@ class PassengerRequest(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="passenger_requests_as_origin",
         verbose_name="Qayerdan",
+        null=True,
+        blank=True,
+        help_text="Katalogdagi tayyor manzil. Xaritada belgilangan nuqta uchun bo'sh qoldiriladi.",
     )
     to_location = models.ForeignKey(
         "locations.Location",
         on_delete=models.PROTECT,
         related_name="passenger_requests_as_destination",
         verbose_name="Qayerga",
+        null=True,
+        blank=True,
+        help_text="Katalogdagi tayyor manzil. Xaritada belgilangan nuqta uchun bo'sh qoldiriladi.",
     )
     passenger_count = models.PositiveSmallIntegerField(
         verbose_name="Yo'lovchilar soni",
@@ -295,6 +404,7 @@ class PassengerRequest(TimeStampedModel):
             models.Index(fields=("passenger", "status"), name="req_passenger_status_idx"),
             models.Index(fields=("from_location", "to_location"), name="req_route_idx"),
             models.Index(fields=("departure_from", "departure_until"), name="req_departure_window_idx"),
+            models.Index(fields=("from_city_name", "to_city_name"), name="req_snapshot_cities_idx"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -305,25 +415,45 @@ class PassengerRequest(TimeStampedModel):
                 condition=models.Q(departure_until__gt=models.F("departure_from")),
                 name="passenger_request_departure_window",
             ),
+            # Was: "from_location must not be NULL and must differ from
+            # to_location". Relaxed because the catalogue FKs are now optional;
+            # the "differ" rule only applies when both are actually set.
             models.CheckConstraint(
-                condition=models.Q(from_location__isnull=False)
-                & ~models.Q(from_location_id=models.F("to_location_id")),
+                condition=models.Q(from_location_id__isnull=True)
+                | models.Q(to_location_id__isnull=True)
+                | ~models.Q(from_location_id=models.F("to_location_id")),
                 name="passenger_request_locations_must_differ",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(from_location_id__isnull=False)
+                | (models.Q(from_latitude__isnull=False) & models.Q(from_longitude__isnull=False)),
+                name="passenger_request_origin_resolved",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(to_location_id__isnull=False)
+                | (models.Q(to_latitude__isnull=False) & models.Q(to_longitude__isnull=False)),
+                name="passenger_request_destination_resolved",
             ),
             models.CheckConstraint(
                 condition=models.Q(max_price_per_seat__isnull=True)
                 | models.Q(max_price_per_seat__gte=NON_NEGATIVE),
                 name="passenger_request_max_price_non_negative",
             ),
+            *point_pair_constraints("from", name_prefix="passenger_request"),
+            *point_pair_constraints("to", name_prefix="passenger_request"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.passenger.display_name}: {self.from_location.name} -> {self.to_location.name}"
+        return f"{self.passenger.display_name}: {self.origin_display} -> {self.destination_display}"
 
     def clean(self) -> None:
         super().clean()
         if self.from_location_id and self.from_location_id == self.to_location_id:
             raise ValidationError({"to_location": _("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")})
+        if self.has_origin_coordinates() and self.has_destination_coordinates():
+            same_point = self.from_latitude == self.to_latitude and self.from_longitude == self.to_longitude
+            if same_point:
+                raise ValidationError({"to_location": _("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")})
         if (
             self.departure_from
             and self.departure_until

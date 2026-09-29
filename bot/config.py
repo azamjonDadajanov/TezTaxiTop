@@ -6,8 +6,17 @@ All tokens and secrets come from ``os.environ``, never from source code.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Final
 from urllib.parse import urlsplit
+
+from dotenv import load_dotenv
+
+# Without this the module only ever sees the inherited process environment, so
+# editing .env had no effect on the bot even though this module documents .env
+# support. Load it before any value below is read. Real environment variables
+# still win, so process-level config keeps overriding the file.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BOT_USERNAME: str = os.environ.get("TELEGRAM_BOT_USERNAME", "")

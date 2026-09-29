@@ -40,6 +40,22 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def env_int(name: str, default: int = 0) -> int:
+    """Read an integer from the environment, tolerating unset *and* blank.
+
+    A bare ``FOO=`` in a ``.env`` file is an unset value as far as humans are
+    concerned, and ``int("")`` would otherwise crash the whole process at
+    import time instead of falling back to the default.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Core security
 # ---------------------------------------------------------------------------
@@ -299,6 +315,29 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
 TELEGRAM_WEBHOOK_URL = os.environ.get("TELEGRAM_WEBHOOK_URL", "")
 TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+
+# ---------------------------------------------------------------------------
+# 2GIS Places API (geocoding for trip origin / destination)
+#
+# The API key is issued per 2GIS project. `TWOGIS_REGION_ID` is the *project*
+# id, and the catalog endpoint REQUIRES it for text-only queries: a request
+# that carries no geographic restriction (`point`, `lon`/`lat`, `polygon`, ...)
+# is rejected without it. Set it to the Uzbekistan project so that
+# "Toshkent" resolves inside Uzbekistan rather than in every 2GIS project.
+# ---------------------------------------------------------------------------
+TWOGIS_API_KEY = os.environ.get("TWOGIS_API_KEY", "")
+TWOGIS_BASE_URL = os.environ.get("TWOGIS_BASE_URL", "https://catalog.api.2gis.com/3.0/items")
+TWOGIS_REGION_ID = env_int("TWOGIS_REGION_ID", 0)
+# Locale format is `<language>_<COUNTRY>`; `ru_UZ` is Russian names inside
+# Uzbekistan and is the most reliably populated 2GIS locale for UZ. Switch to
+# `uz_UZ` once the Uzbek address corpus is dense enough.
+TWOGIS_LOCALE = os.environ.get("TWOGIS_LOCALE", "ru_UZ")
+TWOGIS_TIMEOUT = float(os.environ.get("TWOGIS_TIMEOUT", "5"))
+# Reverse geocoding radius (metres). 2GIS caps `radius` at 2000 m when no text
+# query is present, so anything larger is silently ineffective.
+TWOGIS_REVERSE_RADIUS_M = env_int("TWOGIS_REVERSE_RADIUS_M", 300)
+# 2GIS rejects `page_size` above 50.
+TWOGIS_MAX_PAGE_SIZE = 50
 
 # ---------------------------------------------------------------------------
 # Payment providers

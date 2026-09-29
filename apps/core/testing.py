@@ -8,6 +8,7 @@ is the single place where the business preconditions live.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -110,10 +111,18 @@ class TaxiTestData:
         region = region or self.get_or_create_region()
         return location_services.get_or_create_district(region=region, name="Sergeli tumani")
 
-    def get_or_create_location(self, name: str, district=None):
+    def get_or_create_location(self, name: str, district=None, latitude=None, longitude=None):
         district = district or self.get_or_create_district()
+        if latitude is None or longitude is None:
+            # Deterministic pseudo-coordinates derived from the name, so that two
+            # *different* places never collapse onto a single point (the model
+            # rejects a trip whose origin and destination share coordinates) and
+            # the same name always maps to the same spot.
+            seed = zlib.crc32(name.encode("utf-8"))
+            latitude = Decimal("41.200000") + Decimal(seed % 5_000) / Decimal("10000")
+            longitude = Decimal("69.200000") + Decimal((seed >> 8) % 5_000) / Decimal("10000")
         return location_services.get_or_create_location(
-            district=district, name=name, latitude=Decimal("41.230000"), longitude=Decimal("69.240000")
+            district=district, name=name, latitude=latitude, longitude=longitude
         )
 
     # -- subscriptions -------------------------------------------------------

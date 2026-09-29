@@ -135,7 +135,7 @@ async def transition_trip(telegram_id: int, trip_id: int, action: str):
 
 def _driver_requests(telegram_id: int):
     from apps.rides.models import PassengerRequestStatus
-    from apps.rides.selectors import get_matchable_requests
+    from apps.rides.selectors import build_route_filter, get_matchable_requests
     from apps.users.services import get_required_driver_profile
 
     driver = get_required_driver_profile(_get_user(telegram_id))
@@ -143,6 +143,8 @@ def _driver_requests(telegram_id: int):
         driver.trips.filter(status="active", available_seats__gt=0).values_list(
             "from_location_id",
             "to_location_id",
+            "from_city_name",
+            "to_city_name",
             "departure_time",
             "available_seats",
             "price_per_seat",
@@ -153,17 +155,37 @@ def _driver_requests(telegram_id: int):
     from django.db.models import Q
 
     route_filter = Q()
-    for origin_id, destination_id, departure_time, seats, price in trips:
+    for (
+        origin_id,
+        destination_id,
+        origin_city,
+        destination_city,
+        departure_time,
+        seats,
+        price,
+    ) in trips:
         compatible_budget = Q(max_price_per_seat__isnull=True) | Q(
             max_price_per_seat__gte=price
         )
-        route_filter |= Q(
+        # Falls back to the geocoded city names when the trip was picked on the
+        # map and therefore has no catalogue Location at all.
+        this_route = build_route_filter(
             from_location_id=origin_id,
             to_location_id=destination_id,
+            from_city_name=origin_city,
+            to_city_name=destination_city,
+        )
+        if this_route is None:
+            continue
+        route_filter |= this_route & Q(
             departure_from__lte=departure_time,
             departure_until__gte=departure_time,
             passenger_count__lte=seats,
         ) & compatible_budget
+
+    if not route_filter:
+        return []
+
     requests = (
         get_matchable_requests()
         .filter(route_filter, status=PassengerRequestStatus.ACTIVE)

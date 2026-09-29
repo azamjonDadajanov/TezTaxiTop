@@ -290,7 +290,7 @@ async def show_driver_requests(message: Message, user_id: int | None = None) -> 
     for request in requests:
         await message.answer(
             f"<b>So'rov #{request.pk}</b> · {request.passenger_count} kishi\n"
-            f"{html.escape(request.from_location.name)} → {html.escape(request.to_location.name)}\n"
+            f"{html.escape(request.origin_display)} → {html.escape(request.destination_display)}\n"
             f"🕐 {timezone.localtime(request.departure_from):%d.%m.%Y %H:%M}\n"
             f"Maksimal narx: {request.max_price_per_seat or 'cheklanmagan'} so'm",
             parse_mode="HTML",

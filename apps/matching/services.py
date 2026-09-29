@@ -260,6 +260,8 @@ def get_candidate_trips(request: PassengerRequest) -> list[DriverTrip]:
         to_location_id=request.to_location_id,
         seats=request.passenger_count,
         not_before=request.departure_from,
+        from_city_name=request.from_city_name,
+        to_city_name=request.to_city_name,
     )
     return list(
         queryset.filter(departure_time__lte=request.departure_until).order_by("departure_time", "price_per_seat")
@@ -335,9 +337,17 @@ def refresh_matches_for_request(
 @transaction.atomic
 def refresh_matches_for_trip(trip: DriverTrip, *, reason: str = MatchReason.NEW_MATCH) -> list[TripMatch]:
     """Recompute the ranking of the trip against every active request."""
-    requests = ride_selectors.get_matchable_requests().filter(
+    route_filter = ride_selectors.build_route_filter(
         from_location_id=trip.from_location_id,
         to_location_id=trip.to_location_id,
+        from_city_name=trip.from_city_name,
+        to_city_name=trip.to_city_name,
+    )
+    if route_filter is None:
+        return []
+
+    requests = ride_selectors.get_matchable_requests().filter(
+        route_filter,
         departure_from__lte=trip.departure_time,
         departure_until__gte=trip.departure_time,
     )

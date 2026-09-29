@@ -239,3 +239,157 @@ class Location(TimeStampedModel):
     def same_place(first: "Location", second: "Location") -> bool:
         """Two pickup points are the same when the district matches."""
         return first.pk == second.pk or first.district_id == second.district_id
+
+
+# ---------------------------------------------------------------------------
+# Geocoded route snapshots
+# ---------------------------------------------------------------------------
+#: ``(district, district_area, living_area)`` string names are all capped at
+#: this length by 2GIS; the address gets the longer budget because it is the
+#: value rendered verbatim in the UI.
+_SNAPSHOT_NAME_MAX_LENGTH = 120
+_SNAPSHOT_ADDRESS_MAX_LENGTH = 255
+_SNAPSHOT_PLACE_NAME_MAX_LENGTH = 180
+
+
+def _point_snapshot_fields(prefix: str) -> dict[str, models.Field]:
+    """Build the seven snapshot columns for a route endpoint.
+
+    The factory is called once per abstract model so that each model owns its
+    own field *instances* - Django assigns ``Field.name`` / ``Field.model`` when
+    a field is contributed, so the same instance must never be shared between
+    two models.
+    """
+    return {
+        f"{prefix}_latitude": models.DecimalField(
+            verbose_name="Kenglik (lat)",
+            max_digits=COORDINATE_MAX_DIGITS,
+            decimal_places=COORDINATE_DECIMAL_PLACES,
+            null=True,
+            blank=True,
+            validators=[validate_latitude],
+            help_text="2GIS yoki qurilmadan olingan kenglik. Bo'sh bo'lishi mumkin.",
+        ),
+        f"{prefix}_longitude": models.DecimalField(
+            verbose_name="Uzunlik (lng)",
+            max_digits=COORDINATE_MAX_DIGITS,
+            decimal_places=COORDINATE_DECIMAL_PLACES,
+            null=True,
+            blank=True,
+            validators=[validate_longitude],
+            help_text="2GIS yoki qurilmadan olingan uzunlik. Bo'sh bo'lishi mumkin.",
+        ),
+        f"{prefix}_address": models.CharField(
+            verbose_name="Aniq manzil",
+            max_length=_SNAPSHOT_ADDRESS_MAX_LENGTH,
+            blank=True,
+            default="",
+            help_text="2GIS qaytargan to'liq manzil. Masalan: Toshkent, Amir Temur ko'chasi, 12.",
+        ),
+        f"{prefix}_place_name": models.CharField(
+            verbose_name="Nomi",
+            max_length=_SNAPSHOT_PLACE_NAME_MAX_LENGTH,
+            blank=True,
+            default="",
+            help_text="2GIS obyekti nomi yoki kvartal nomi.",
+        ),
+        f"{prefix}_region_name": models.CharField(
+            verbose_name="Viloyat / shahar",
+            max_length=_SNAPSHOT_NAME_MAX_LENGTH,
+            blank=True,
+            default="",
+        ),
+        f"{prefix}_city_name": models.CharField(
+            verbose_name="Shahar",
+            max_length=_SNAPSHOT_NAME_MAX_LENGTH,
+            blank=True,
+            default="",
+        ),
+        f"{prefix}_district_name": models.CharField(
+            verbose_name="Tuman",
+            max_length=_SNAPSHOT_NAME_MAX_LENGTH,
+            blank=True,
+            default="",
+        ),
+    }
+
+
+def point_pair_constraints(prefix: str, *, name_prefix: str) -> list[models.CheckConstraint]:
+    """Both coordinates present-or-absent together, for one route endpoint.
+
+    Public because ``apps.rides`` attaches the same pair to ``DriverTrip`` and
+    ``PassengerRequest``; the name mirrors Django's constraint prefixes.
+    ``name_prefix`` keeps the generated names unique *per model*, which Django
+    enforces (PostgreSQL would allow the same name in two tables, Django does
+    not).
+    """
+    return [
+        models.CheckConstraint(
+            condition=(
+                models.Q(**{f"{prefix}_latitude__isnull": True})
+                & models.Q(**{f"{prefix}_longitude__isnull": True})
+            )
+            | (
+                models.Q(**{f"{prefix}_latitude__isnull": False})
+                & models.Q(**{f"{prefix}_longitude__isnull": False})
+            ),
+            name=f"{name_prefix}_{prefix}_coordinates_are_both_set",
+        ),
+        models.CheckConstraint(
+            condition=models.Q(**{f"{prefix}_latitude__isnull": True})
+            | (
+                models.Q(**{f"{prefix}_latitude__gte": -90})
+                & models.Q(**{f"{prefix}_latitude__lte": 90})
+            ),
+            name=f"{name_prefix}_{prefix}_latitude_range",
+        ),
+        models.CheckConstraint(
+            condition=models.Q(**{f"{prefix}_longitude__isnull": True})
+            | (
+                models.Q(**{f"{prefix}_longitude__gte": -180})
+                & models.Q(**{f"{prefix}_longitude__lte": 180})
+            ),
+            name=f"{name_prefix}_{prefix}_longitude_range",
+        ),
+    ]
+
+
+class OriginPointSnapshot(models.Model):
+    """``from_*`` half of a geocoded route endpoint.
+
+    A trip/request resolves *one* of two ways:
+
+    * a curated catalogue :class:`Location` (``from_location``), or
+    * a raw point picked on the map / read from GPS (``from_latitude`` ...).
+
+    The FK is therefore optional. The snapshot columns are a **denormalised
+    copy** taken at creation time: renaming a district in the admin or a
+    2GIS catalogue change must never rewrite the history of a booked ride, and
+    passengers and drivers must see byte-identical text for the same ride.
+    """
+
+    locals().update(_point_snapshot_fields("from"))
+
+    class Meta:
+        abstract = True
+
+
+class DestinationPointSnapshot(models.Model):
+    """``to_*`` half of a geocoded route endpoint. See :class:`OriginPointSnapshot`."""
+
+    locals().update(_point_snapshot_fields("to"))
+
+    class Meta:
+        abstract = True
+
+
+__all__ = [
+    "COORDINATE_DECIMAL_PLACES",
+    "COORDINATE_MAX_DIGITS",
+    "DestinationPointSnapshot",
+    "District",
+    "Location",
+    "OriginPointSnapshot",
+    "Region",
+    "normalize_name",
+]

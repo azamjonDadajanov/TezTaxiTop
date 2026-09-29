@@ -86,3 +86,29 @@ class LocationWriteSerializer(serializers.ModelSerializer):
 
         validate_longitude(value)
         return value
+
+
+class ResolvedPlaceSerializer(serializers.Serializer):
+    """One 2GIS result, ready for the client to store as a trip endpoint.
+
+    The field names mirror the trip snapshot columns (``address``,
+    ``region_name``, ``city_name``, ``district_name``) so a client can forward
+    the block straight into the ``origin`` / ``destination`` write payload.
+    """
+
+    place_id = serializers.CharField(read_only=True)
+    display_name = serializers.CharField(read_only=True)
+    short_name = serializers.CharField(read_only=True)
+    full_address = serializers.CharField(read_only=True)
+    address = serializers.CharField(read_only=True)
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, read_only=True, coerce_to_string=False
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6, read_only=True, coerce_to_string=False
+    )
+    region_name = serializers.CharField(read_only=True)
+    city_name = serializers.CharField(read_only=True)
+    district_name = serializers.CharField(read_only=True)
+    district_area_name = serializers.CharField(read_only=True)
+    living_area_name = serializers.CharField(read_only=True)

@@ -105,6 +105,46 @@ def _assert_trip_is_editable(trip: DriverTrip) -> None:
         raise TripAlreadyCompleted()
 
 
+def _snapshot_point(snapshot: dict, prefix: str) -> tuple[Decimal, Decimal] | None:
+    """Read one endpoint's ``(latitude, longitude)`` out of a snapshot dict."""
+    latitude = snapshot.get(f"{prefix}_latitude")
+    longitude = snapshot.get(f"{prefix}_longitude")
+    if latitude is None or longitude is None:
+        return None
+    return (_to_decimal(latitude), _to_decimal(longitude))
+
+
+def _model_point(obj, prefix: str) -> tuple[Decimal, Decimal] | None:
+    """Same as :func:`_snapshot_point` but for an in-memory model instance."""
+    return _snapshot_point(
+        {
+            f"{prefix}_latitude": getattr(obj, f"{prefix}_latitude", None),
+            f"{prefix}_longitude": getattr(obj, f"{prefix}_longitude", None),
+        },
+        prefix,
+    )
+
+
+def _assert_distinct_endpoints(
+    *,
+    from_location_id,
+    to_location_id,
+    from_point: tuple[Decimal, Decimal] | None,
+    to_point: tuple[Decimal, Decimal] | None,
+) -> None:
+    """Reject a route whose two endpoints are the same place.
+
+    Identity is the catalogue FK when both sides carry one, and the coordinates
+    otherwise. Comparing only the FKs - the pre-map behaviour - would let a
+    map-picked "Toshkent -> Toshkent" trip through, because such a trip has no
+    FKs at all.
+    """
+    same_catalogue_place = from_location_id is not None and from_location_id == to_location_id
+    same_point = from_point is not None and from_point == to_point
+    if same_catalogue_place or same_point:
+        raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+
+
 # ---------------------------------------------------------------------------
 # Driver eligibility
 # ---------------------------------------------------------------------------
@@ -158,30 +198,87 @@ def _validate_vehicle_for_trip(driver_profile: DriverProfile, vehicle: Vehicle) 
 # ---------------------------------------------------------------------------
 # Trip lifecycle
 # ---------------------------------------------------------------------------
-@transaction.atomic
 def create_trip(
     *,
     driver_profile: DriverProfile,
     vehicle: Vehicle,
-    from_location: Location,
-    to_location: Location,
     departure_time,
     total_seats: int,
     price_per_seat,
+    from_location: Location | None = None,
+    to_location: Location | None = None,
+    origin: dict | None = None,
+    destination: dict | None = None,
     comment: str = "",
     publish: bool = True,
+) -> DriverTrip:
+    """Create a driver trip, resolving both route endpoints first.
+
+    ``publish=True`` makes the trip immediately ``ACTIVE``; ``False`` keeps it a
+    ``DRAFT`` that is invisible to passengers.
+
+    Each route endpoint is described either by a catalogue ``*_location`` or by
+    a snapshot dict (the seven ``from_*`` / ``to_*`` columns) - see
+    :func:`apps.locations.services.build_point_snapshot`.
+
+    The endpoint resolution (which may call 2GIS, up to ``TWOGIS_TIMEOUT``
+    seconds per endpoint) deliberately happens **outside** the database
+    transaction opened by :func:`_create_trip_in_transaction`, so a slow or
+    hanging provider can never hold row locks.
+    """
+    from apps.locations.services import build_point_snapshot
+
+    origin_snapshot = build_point_snapshot("from", location=from_location, **(origin or {}))
+    destination_snapshot = build_point_snapshot("to", location=to_location, **(destination or {}))
+    return _create_trip_in_transaction(
+        driver_profile=driver_profile,
+        vehicle=vehicle,
+        from_location=from_location,
+        to_location=to_location,
+        departure_time=departure_time,
+        total_seats=total_seats,
+        price_per_seat=price_per_seat,
+        comment=comment,
+        publish=publish,
+        origin_snapshot=origin_snapshot,
+        destination_snapshot=destination_snapshot,
+    )
+
+
+@transaction.atomic
+def _create_trip_in_transaction(
+    *,
+    driver_profile: DriverProfile,
+    vehicle: Vehicle,
+    from_location: Location | None,
+    to_location: Location | None,
+    departure_time,
+    total_seats: int,
+    price_per_seat,
+    comment: str,
+    publish: bool,
+    origin_snapshot: dict,
+    destination_snapshot: dict,
 ) -> DriverTrip:
     """Create a driver trip.
 
     ``publish=True`` makes the trip immediately ``ACTIVE``; ``False`` keeps it a
     ``DRAFT`` that is invisible to passengers.
+
+    Each route endpoint is described either by a catalogue ``*_location`` or by
+    a snapshot dict (the seven ``from_*`` / ``to_*`` columns) - see
+    :func:`apps.locations.services.build_point_snapshot`.
     """
     if total_seats is None or total_seats <= 0:
         raise BusinessValidationError("Kamida 1 ta o'rin kerak.")
     if total_seats > MAX_SEATS_PER_TRIP:
         raise BusinessValidationError(f"Ko'pi bilan {MAX_SEATS_PER_TRIP} ta o'rin.")
-    if from_location.pk == to_location.pk:
-        raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+    _assert_distinct_endpoints(
+        from_location_id=from_location.pk if from_location is not None else None,
+        to_location_id=to_location.pk if to_location is not None else None,
+        from_point=_snapshot_point(origin_snapshot, "from"),
+        to_point=_snapshot_point(destination_snapshot, "to"),
+    )
     if departure_time is None:
         raise BusinessValidationError("Chuqish vaqti majburiy.")
     if timezone.is_naive(departure_time):
@@ -208,6 +305,8 @@ def create_trip(
         price_per_seat=price,
         comment=comment.strip(),
         status=DriverTripStatus.ACTIVE if publish else DriverTripStatus.DRAFT,
+        **origin_snapshot,
+        **destination_snapshot,
     )
     trip.full_clean()
     trip.save()
@@ -219,18 +318,36 @@ def create_trip(
     return trip
 
 
-@transaction.atomic
 def update_trip(trip: DriverTrip, **changes) -> DriverTrip:
     """Update an editable trip.
 
-    Allowed keys: ``vehicle``, ``from_location``, ``to_location``,
-    ``departure_time``, ``total_seats``, ``price_per_seat``, ``comment``.
+    Allowed keys: ``vehicle``, ``from_location``, ``to_location``, ``origin``,
+    ``destination``, ``departure_time``, ``total_seats``, ``price_per_seat``,
+    ``comment``.
 
     ``available_seats`` is deliberately **not** editable: it is derived from the
     orders and is only changed through :func:`reserve_seats` /
     :func:`release_seats`.
+
+    A new ``origin`` / ``destination`` is resolved before the transaction opens,
+    for the same reason as in :func:`create_trip`.
     """
-    locked_trip = _lock_trip(trip.pk)
+    from apps.locations.services import build_point_snapshot
+
+    snapshot_columns: dict[str, object] = {}
+    for write_key, prefix in (("origin", "from"), ("destination", "to")):
+        payload = changes.pop(write_key, None)
+        if payload is not None:
+            snapshot_columns.update(build_point_snapshot(prefix, **payload))
+
+    return _update_trip_in_transaction(trip.pk, changes, snapshot_columns)
+
+
+@transaction.atomic
+def _update_trip_in_transaction(
+    trip_pk: int, changes: dict, snapshot_columns: dict[str, object]
+) -> DriverTrip:
+    locked_trip = _lock_trip(trip_pk)
     _assert_trip_is_editable(locked_trip)
 
     allowed_fields = {
@@ -253,8 +370,17 @@ def update_trip(trip: DriverTrip, **changes) -> DriverTrip:
                 raise BusinessValidationError("Narx manfiy bo'lishi mumkin emas.")
         setattr(locked_trip, field, value)
 
-    if locked_trip.from_location_id == locked_trip.to_location_id:
-        raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+    for column, value in snapshot_columns.items():
+        setattr(locked_trip, column, value)
+
+    _assert_distinct_endpoints(
+        from_location_id=locked_trip.from_location_id,
+        to_location_id=locked_trip.to_location_id,
+        # The snapshot columns have already been applied above, so the instance
+        # holds the post-update route - including any pin the caller just moved.
+        from_point=_model_point(locked_trip, "from"),
+        to_point=_model_point(locked_trip, "to"),
+    )
     if locked_trip.total_seats < locked_trip.booked_seats:
         raise BusinessValidationError(
             f"Allaqachon {locked_trip.booked_seats} ta o'rin band, kamaytirib bo'lmaydi."
@@ -449,27 +575,69 @@ def lock_trip_for_update(trip_id: int) -> DriverTrip:
 # ---------------------------------------------------------------------------
 # Passenger requests
 # ---------------------------------------------------------------------------
-@transaction.atomic
 def create_passenger_request(
     *,
     passenger: User,
-    from_location: Location,
-    to_location: Location,
+    from_location: Location | None = None,
+    to_location: Location | None = None,
     passenger_count: int = 1,
     max_price_per_seat=None,
     departure_from=None,
     departure_until=None,
     comment: str = "",
+    origin: dict | None = None,
+    destination: dict | None = None,
 ) -> PassengerRequest:
-    """Create a passenger request and immediately queue the matching job."""
+    """Create a passenger request and immediately queue the matching job.
+
+    Route endpoints are resolved before the transaction opens, exactly like
+    :func:`create_trip`.
+    """
+    from apps.locations.services import build_point_snapshot
+
+    origin_snapshot = build_point_snapshot("from", location=from_location, **(origin or {}))
+    destination_snapshot = build_point_snapshot("to", location=to_location, **(destination or {}))
+
+    return _create_passenger_request_in_transaction(
+        passenger=passenger,
+        from_location=from_location,
+        to_location=to_location,
+        passenger_count=passenger_count,
+        max_price_per_seat=max_price_per_seat,
+        departure_from=departure_from,
+        departure_until=departure_until,
+        comment=comment,
+        origin_snapshot=origin_snapshot,
+        destination_snapshot=destination_snapshot,
+    )
+
+
+@transaction.atomic
+def _create_passenger_request_in_transaction(
+    *,
+    passenger: User,
+    from_location: Location | None,
+    to_location: Location | None,
+    passenger_count: int,
+    max_price_per_seat,
+    departure_from,
+    departure_until,
+    comment: str,
+    origin_snapshot: dict,
+    destination_snapshot: dict,
+) -> PassengerRequest:
     if passenger.is_blocked:
         from apps.core.exceptions import UserIsBlocked
 
         raise UserIsBlocked()
     if passenger_count is None or passenger_count <= 0:
         raise BusinessValidationError("Yo'lovchi soni 0 dan katta bo'lishi kerak.")
-    if from_location.pk == to_location.pk:
-        raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+    _assert_distinct_endpoints(
+        from_location_id=from_location.pk if from_location is not None else None,
+        to_location_id=to_location.pk if to_location is not None else None,
+        from_point=_snapshot_point(origin_snapshot, "from"),
+        to_point=_snapshot_point(destination_snapshot, "to"),
+    )
 
     departure_from = departure_from or timezone.now()
     if departure_until is None:
@@ -495,6 +663,8 @@ def create_passenger_request(
         departure_until=departure_until,
         comment=comment.strip(),
         status=PassengerRequestStatus.ACTIVE,
+        **origin_snapshot,
+        **destination_snapshot,
     )
     passenger_request.full_clean()
     passenger_request.save()
@@ -502,9 +672,30 @@ def create_passenger_request(
     return passenger_request
 
 
-@transaction.atomic
 def update_passenger_request(passenger_request: PassengerRequest, **changes) -> PassengerRequest:
-    """Update an active passenger request."""
+    """Update an active passenger request.
+
+    A new ``origin`` / ``destination`` is resolved before the transaction opens,
+    exactly like :func:`create_passenger_request`.
+    """
+    from apps.locations.services import build_point_snapshot
+
+    snapshot_columns: dict[str, object] = {}
+    for write_key, prefix in (("origin", "from"), ("destination", "to")):
+        payload = changes.pop(write_key, None)
+        if payload is not None:
+            snapshot_columns.update(build_point_snapshot(prefix, **payload))
+
+    return _update_passenger_request_in_transaction(
+        passenger_request.pk, changes, snapshot_columns
+    )
+
+
+@transaction.atomic
+def _update_passenger_request_in_transaction(
+    request_pk: int, changes: dict, snapshot_columns: dict[str, object]
+) -> PassengerRequest:
+    passenger_request = PassengerRequest.objects.select_for_update().get(pk=request_pk)
     if passenger_request.status != PassengerRequestStatus.ACTIVE:
         raise TripNotEditable("Faqat faol so'rovni tahrirlash mumkin.")
 
@@ -526,8 +717,15 @@ def update_passenger_request(passenger_request: PassengerRequest, **changes) -> 
             value = _to_decimal(value)
         setattr(passenger_request, field, value)
 
-    if passenger_request.from_location_id == passenger_request.to_location_id:
-        raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+    for column, value in snapshot_columns.items():
+        setattr(passenger_request, column, value)
+
+    _assert_distinct_endpoints(
+        from_location_id=passenger_request.from_location_id,
+        to_location_id=passenger_request.to_location_id,
+        from_point=_model_point(passenger_request, "from"),
+        to_point=_model_point(passenger_request, "to"),
+    )
     if passenger_request.passenger_count <= 0:
         raise BusinessValidationError("Yo'lovchi soni 0 dan katta bo'lishi kerak.")
     if passenger_request.departure_until <= passenger_request.departure_from:
