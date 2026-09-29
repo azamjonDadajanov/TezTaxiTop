@@ -1,0 +1,31 @@
+[build]
+  # Netlify resolves `base`/`publish` relative to the site's base directory.
+  # When the base directory is "frontend", use "." and "dist".
+  # When the base directory is the repository root, ../netlify.toml applies
+  # instead -- one of the two is always read, so the API proxy is never lost.
+  base = "."
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# The Django API is proxied through the same origin so the SPA can keep using
+# the relative baseURL "/api/v1" (see frontend/src/api.ts). That keeps requests
+# same-origin, which means no CORS preflight and no CORS configuration needed.
+#
+# NOTE: the ngrok free domain below changes every time the tunnel restarts.
+# Update it in BOTH netlify.toml files (this one and ../netlify.toml) whenever
+# that happens, or point it at a stable domain once one is available.
+[[redirects]]
+  from = "/api/*"
+  to = "https://yanking-earplugs-distance.ngrok-free.dev/api/:splat"
+  status = 200
+  force = true
+
+# SPA history fallback for react-router deep links. Must stay last so the
+# /api/* rule above wins.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
