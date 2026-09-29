@@ -11,16 +11,43 @@ export function setAuthToken(token: string | null) {
   else delete api.defaults.headers.common.Authorization
 }
 
+function messageForStatus(status: number | undefined) {
+  switch (status) {
+    case 400:
+      return 'So‘rov ma’lumotlari noto‘g‘ri.'
+    case 401:
+      return 'Sessiya yaroqsiz yoki muddati tugagan.'
+    case 403:
+      return 'Bu amalga shoshhish uchun ruxsat yo‘q.'
+    case 404:
+      return 'API manzili topilmadi. VITE_API_BASE_URL yoki netlify.toml redirect to‘g‘ri sozlanganmi tekshiring.'
+    case 405:
+      return 'API manzilida bunday so‘rov usuli mavjud emas.'
+    case 429:
+      return 'Juda ko‘p so‘rov yuborildi. Biroz kutib turing.'
+    case 502:
+    case 503:
+    case 504:
+      return 'Server vaqtincha javob bermayapti. Qayta urinib ko‘ring.'
+    default:
+      return undefined
+  }
+}
+
 api.interceptors.response.use((response) => response, (error: unknown) => {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as Record<string, unknown> | undefined
-    const message = typeof data?.detail === 'string'
-      ? data.detail
-      : typeof data?.error === 'string'
-        ? data.error
-        : error.response?.status === 401
-          ? 'Sessiya yaroqsiz yoki muddati tugagan.'
-          : error.message || 'Server bilan bog‘lanib bo‘lmadi.'
+    // A proxy or SPA host answers 404 with HTML, so `data` is a string and has
+    // no `detail`/`error` key. Fall back to a status-specific hint instead of
+    // surfacing the raw axios text.
+    const status = error.response?.status
+    const payload = error.response?.data
+    const body = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined
+    const detail = typeof body?.detail === 'string'
+      ? body.detail
+      : typeof body?.error === 'string'
+        ? body.error
+        : ''
+    const message = detail || messageForStatus(status) || error.message || 'Server bilan bog‘lanib bo‘lmadi.'
     return Promise.reject(new Error(message))
   }
   return Promise.reject(error)
