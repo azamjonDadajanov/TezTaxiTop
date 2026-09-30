@@ -48,11 +48,19 @@ api.interceptors.response.use((response) => response, (error: unknown) => {
     const status = error.response?.status
     const payload = error.response?.data
     const body = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined
+    // A business error arrives as `{error: {code, message}}`, so `error` is an
+    // object - reading it as a string never matched and every server message was
+    // replaced by the generic status hint below.
+    const envelope = body?.error && typeof body.error === 'object'
+      ? body.error as Record<string, unknown>
+      : undefined
     const detail = typeof body?.detail === 'string'
       ? body.detail
       : typeof body?.error === 'string'
         ? body.error
-        : ''
+        : typeof envelope?.message === 'string'
+          ? envelope.message
+          : ''
     const message = detail || messageForStatus(status) || error.message || 'Server bilan bog‘lanib bo‘lmadi.'
     return Promise.reject(new Error(message))
   }

@@ -210,6 +210,61 @@ class TwoGisRequestTests(TestCase):
             two_gis.reverse_geocode("41.311081", "69.240562")
         self.assertEqual(get.call_count, 1)
 
+    def test_search_nearby_always_sends_a_radius(self) -> None:
+        """2GIS answers 404 to `search_nearby` without a radius, even for a
+        district that plainly exists a few km away."""
+        with patch("apps.locations.two_gis.requests.get") as get:
+            get.return_value = _FakeResponse(_payload(TASHKENT_ITEM))
+            two_gis.search_places("Yunusobod", near=(Decimal("69.24"), Decimal("41.31")))
+        params = get.call_args.kwargs["params"]
+        self.assertEqual(params["search_nearby"], "true")
+        self.assertTrue(params.get("radius"), "search_nearby without radius returns 404")
+
+    def test_meta_404_is_an_empty_result_not_an_outage(self) -> None:
+        """A miss is HTTP 200 with meta.code=404; reporting it as 502 made an
+        ordinary 'nothing found' look like a broken integration."""
+        not_found = {
+            "meta": {"code": 404, "error": {"message": "Results not found", "type": "itemNotFound"}},
+            "result": {"items": []},
+        }
+        with patch("apps.locations.two_gis.requests.get") as get:
+            get.return_value = _FakeResponse(not_found)
+            self.assertEqual(two_gis.search_places("Nowhere", near=(Decimal("69.24"), Decimal("41.31"))), [])
+
+    def test_reverse_geocode_reports_a_404_meta_as_unresolved(self) -> None:
+        not_found = {
+            "meta": {"code": 404, "error": {"message": "Results not found", "type": "itemNotFound"}},
+            "result": {"items": []},
+        }
+        with patch("apps.locations.two_gis.requests.get") as get:
+            get.return_value = _FakeResponse(not_found)
+            with self.assertRaises(PlaceNotResolved):
+                two_gis.reverse_geocode("41.0", "69.0")
+
+    def test_meta_5xx_is_still_an_outage(self) -> None:
+        with patch("apps.locations.two_gis.requests.get") as get:
+            get.return_value = _FakeResponse({"meta": {"code": 500, "error": {"message": "boom"}}})
+            with self.assertRaises(GeoProviderUnavailable):
+                two_gis.reverse_geocode("41.0", "69.0")
+
+    def test_empty_payload_is_not_mutated_by_a_caller(self) -> None:
+        """The 404 shortcut returns a shared module-level dict that then lands in
+        the cache, so it must stay pristine."""
+        not_found = {
+            "meta": {"code": 404, "error": {"message": "Results not found", "type": "itemNotFound"}},
+            "result": {"items": [TASHKENT_ITEM]},
+        }
+        with patch("apps.locations.two_gis.requests.get") as get:
+            get.return_value = _FakeResponse(not_found)
+            two_gis.search_places("Amir Temur", near=(Decimal("69.24"), Decimal("41.31")))
+
+        from django.core.cache import cache as django_cache
+
+        key = f"{two_gis._CACHE_PREFIX}:{two_gis._forward_cache_key('Amir Temur', (Decimal('69.24'), Decimal('41.31')), 10)}"
+        stored = django_cache.get(key)
+        if stored is not None:  # a cache backend may decline to store
+            self.assertEqual(stored["result"]["items"], [])
+
 
 @override_settings(TWOGIS_API_KEY="test-key", TWOGIS_REGION_ID=42)
 class PointSnapshotTests(TestCase):

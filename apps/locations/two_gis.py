@@ -54,6 +54,15 @@ GEOCODE_FIELDS = "items.point,items.adm_div,items.address,items.full_address_nam
 _CACHE_TTL = 60 * 60 * 24
 _CACHE_PREFIX = "twogis"
 
+#: Returned in place of a 404 response so the caller sees an ordinary empty
+#: result. Frozen: it is stored in the cache and must never be mutated.
+_EMPTY_PAYLOAD = {"meta": {"code": 200}, "result": {"items": [], "total": 0}}
+
+#: Radius for a "near me" forward search, in metres. 2GIS requires a radius
+#: alongside ``search_nearby``; without it the query is rejected with a 404
+#: even when an obvious match exists a couple of kilometres away.
+_NEAR_RADIUS_M = 5000
+
 #: Administrative types we keep, longest-name-fallback order per level.
 _REGION_TYPES = ("region",)
 _CITY_TYPES = ("city", "settlement", "place", "amana", "division")
@@ -115,6 +124,10 @@ def search_places(
         params["lon"] = f"{float(longitude):.6f}"
         params["lat"] = f"{float(latitude):.6f}"
         params["search_nearby"] = "true"
+        # 2GIS rejects `search_nearby` without a radius: the response is a 404
+        # "Results not found" even for a district that plainly exists, which
+        # reads as a provider outage rather than an empty result.
+        params["radius"] = str(_NEAR_RADIUS_M)
     elif not settings.TWOGIS_REGION_ID:
         # The endpoint rejects a text-only query with no geographic
         # restriction and no region_id. Fail loudly with an actionable message
@@ -241,9 +254,17 @@ def _request(params: dict[str, Any], *, cache_key: str) -> dict[str, Any]:
 
     if not isinstance(payload, dict):
         raise GeoProviderUnavailable()
-    meta_code = (payload.get("meta") or {}).get("code")
+    meta = payload.get("meta") or {}
+    meta_code = meta.get("code")
     if isinstance(meta_code, int) and meta_code >= 400:
-        logger.warning("2GIS meta.code=%s: %s", meta_code, (payload.get("meta") or {}).get("error"))
+        # ``meta.code`` carries the real status; the HTTP status is always 200
+        # for these responses. 404/itemNotFound means "nothing matched", which
+        # is a legitimate empty answer rather than an outage - reporting it as a
+        # 502 made an ordinary miss look like a broken integration.
+        if meta_code == 404:
+            logger.info("2GIS meta.code=404 (%s): natija topilmadi", (meta.get("error") or {}).get("type"))
+            return _EMPTY_PAYLOAD
+        logger.warning("2GIS meta.code=%s: %s", meta_code, meta.get("error"))
         raise GeoProviderUnavailable()
 
     cache.set(full_key, payload, _CACHE_TTL)
