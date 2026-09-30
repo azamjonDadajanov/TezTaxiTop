@@ -39,3 +39,6 @@ build/
 
 # Logs
 *.log
+
+# Knowledge graph (graphify) - machine-local, rebuilt by git hooks
+graphify-out/
