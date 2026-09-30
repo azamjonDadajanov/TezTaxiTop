@@ -103,6 +103,37 @@ class MapEndpointTripTests(TestCase):
             with self.assertRaises(BusinessValidationError):
                 ride_services.update_trip(trip, origin=dict(SAMARKAND))
 
+    def test_moving_the_pin_clears_the_catalogue_location(self) -> None:
+        """Regression: the read layer prefers the catalogue row whenever one is
+        still linked, so a trip edited from a catalogue route onto a map pin
+        would keep displaying the place the driver moved away from."""
+        catalogue_trip = self.data.create_trip(self.driver)
+        self.assertIsNotNone(catalogue_trip.from_location_id)
+
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            moved = ride_services.update_trip(
+                catalogue_trip, origin={"latitude": "41.400000", "longitude": "69.300000"}
+            )
+        moved.refresh_from_db()
+
+        self.assertIsNone(moved.from_location_id)
+        self.assertEqual(moved.from_latitude, Decimal("41.400000"))
+        self.assertNotIn("Qorasuv", moved.origin_display)
+
+    def test_an_explicit_catalogue_location_still_wins_over_a_pin(self) -> None:
+        """Keeps the precedence of :func:`build_point_snapshot`: a resupplied
+        ``from_location`` is the deliberate choice, so it must not be cleared."""
+        catalogue_trip = self.data.create_trip(self.driver)
+        other = self.data.get_or_create_location("Buxoro MFY")
+
+        moved = ride_services.update_trip(
+            catalogue_trip, origin=dict(TASHKENT), from_location=other
+        )
+        moved.refresh_from_db()
+
+        self.assertEqual(moved.from_location_id, other.pk)
+        self.assertEqual(moved.from_latitude, other.latitude)
+
 
 @override_settings(TWOGIS_API_KEY="test-key", TWOGIS_REGION_ID=42)
 class MapEndpointRequestTests(TestCase):
@@ -138,3 +169,25 @@ class MapEndpointRequestTests(TestCase):
         with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
             with self.assertRaises(BusinessValidationError):
                 self.create_request(destination=dict(TASHKENT))
+
+    def test_moving_the_pin_clears_the_catalogue_location(self) -> None:
+        """Same regression as the driver side: the stale FK must not win the read."""
+        catalogue_request = ride_services.create_passenger_request(
+            passenger=self.passenger,
+            from_location=self.data.get_or_create_location("Qorasuv MFY"),
+            to_location=self.data.get_or_create_location("Sergeli MFY"),
+            departure_from=timezone.now() + timedelta(hours=1),
+            departure_until=timezone.now() + timedelta(hours=3),
+            passenger_count=1,
+        )
+        self.assertIsNotNone(catalogue_request.from_location_id)
+
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            moved = ride_services.update_passenger_request(
+                catalogue_request, origin={"latitude": "41.400000", "longitude": "69.300000"}
+            )
+        moved.refresh_from_db()
+
+        self.assertIsNone(moved.from_location_id)
+        self.assertEqual(moved.from_latitude, Decimal("41.400000"))
+        self.assertNotIn("Qorasuv", moved.origin_display)

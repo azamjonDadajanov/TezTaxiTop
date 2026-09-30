@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Bell, CarFront, Clock3, MapPin, Plus, ShieldCheck, Sparkles, UsersRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { api, currentDateLabel, dateTime, readableError, toArray, type Order, type PassengerRequest, type Trip } from '../api'
+import { api, currentDateLabel, dateTime, endpointLabel, readableError, toArray, type Order, type PassengerRequest, type Trip } from '../api'
 import { useAuth } from '../authContext'
 import { ContentState, PageHeading, RouteLine, StatusBadge } from '../components/ui'
 import { useRoleMode } from './useRoleMode'
@@ -35,7 +35,7 @@ export function DashboardPage() {
           <div className="compact-list">{trips.data?.slice(0, 3).map((item) => {
             const request = item as unknown as PassengerRequest
             const trip = item as Trip
-            return <article className="compact-item" key={item.id}><RouteLine from={trip.from_location_detail?.name || request.from_location_detail?.name} to={trip.to_location_detail?.name || request.to_location_detail?.name} /><div className="compact-meta"><span><Clock3 size={14} />{dateTime(trip.departure_time || request.departure_from || undefined)}</span><StatusBadge value={item.status_display || item.status} /></div></article>
+            return <article className="compact-item" key={item.id}><RouteLine from={endpointLabel(trip.origin, trip.from_location_detail) || endpointLabel(request.origin, request.from_location_detail)} to={endpointLabel(trip.destination, trip.to_location_detail) || endpointLabel(request.destination, request.to_location_detail)} /><div className="compact-meta"><span><Clock3 size={14} />{dateTime(trip.departure_time || request.departure_from || undefined)}</span><StatusBadge value={item.status_display || item.status} /></div></article>
           })}</div>
         </ContentState>
       </section>

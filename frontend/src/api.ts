@@ -88,14 +88,64 @@ export type DriverProfile = {
 }
 
 export type ApiItem = Record<string, unknown> & { id: number }
-export type Location = { id: number; name: string; full_name?: string; district_name?: string; region_name?: string }
 export type Vehicle = { id: number; brand: string; model: string; plate_number: string; seats_for_passengers?: number; is_usable_for_trip?: boolean }
+
+/** One route endpoint as the API returns it. `id` is null for a point that was
+ *  picked on the map, which is why every read goes through this block instead of
+ *  the catalogue FK pair. */
+export type RouteEndpoint = {
+  id: number | null
+  display: string
+  name: string
+  address: string
+  latitude: number | null
+  longitude: number | null
+  region_name: string
+  city_name: string
+  district_name: string
+  is_catalogue_place: boolean
+}
+
+/** One endpoint as the map picker produces it, ready to POST as `origin` /
+ *  `destination`. The backend accepts coordinates alone; the text fields only
+ *  save it a reverse-geocode round trip. */
+export type RoutePointInput = {
+  latitude: number
+  longitude: number
+  address?: string
+  place_name?: string
+  region_name?: string
+  city_name?: string
+  district_name?: string
+}
+
+/** One 2GIS result proxied by `GET /locations/geo/`. Field names mirror the trip
+ *  snapshot columns so the block can be forwarded into the write payload. */
+export type ResolvedPlace = {
+  place_id: string
+  display_name: string
+  short_name: string
+  full_address: string
+  address: string
+  latitude: number
+  longitude: number
+  region_name: string
+  city_name: string
+  district_name: string
+  district_area_name?: string
+  living_area_name?: string
+}
+
 export type Trip = ApiItem & {
   vehicle: number
-  from_location: number
-  to_location: number
-  from_location_detail?: { name: string; region: string }
-  to_location_detail?: { name: string; region: string }
+  from_location: number | null
+  to_location: number | null
+  origin?: RouteEndpoint
+  destination?: RouteEndpoint
+  origin_display?: string
+  destination_display?: string
+  from_location_detail?: { name: string; region: string } | null
+  to_location_detail?: { name: string; region: string } | null
   departure_time: string
   total_seats: number
   comment?: string
@@ -109,10 +159,14 @@ export type Trip = ApiItem & {
   vehicle_plate_number?: string
 }
 export type PassengerRequest = ApiItem & {
-  from_location: number
-  to_location: number
-  from_location_detail?: { name: string; region: string }
-  to_location_detail?: { name: string; region: string }
+  from_location: number | null
+  to_location: number | null
+  origin?: RouteEndpoint
+  destination?: RouteEndpoint
+  origin_display?: string
+  destination_display?: string
+  from_location_detail?: { name: string; region: string } | null
+  to_location_detail?: { name: string; region: string } | null
   passenger_count: number
   departure_from?: string | null
   departure_until?: string | null
@@ -137,6 +191,26 @@ export type Order = ApiItem & {
 export function toArray<T>(payload: T[] | { results?: T[] } | undefined): T[] {
   if (Array.isArray(payload)) return payload
   return payload?.results ?? []
+}
+
+/** Label for one route endpoint. Reads the unified block first so a map-picked
+ *  trip - which has no catalogue FK - still renders a real address instead of
+ *  falling back to "Manzil aniqlanmagan". */
+export function endpointLabel(endpoint?: RouteEndpoint | null, legacy?: { name?: string } | null) {
+  return endpoint?.display || endpoint?.name || endpoint?.address || legacy?.name || undefined
+}
+
+/** Turns a 2GIS result into the `origin` / `destination` write block. */
+export function placeToRoutePoint(place: ResolvedPlace): RoutePointInput {
+  return {
+    latitude: place.latitude,
+    longitude: place.longitude,
+    address: place.address || place.full_address || '',
+    place_name: place.short_name || place.display_name || '',
+    region_name: place.region_name || '',
+    city_name: place.city_name || '',
+    district_name: place.district_name || '',
+  }
 }
 
 export function readableError(error: unknown) {

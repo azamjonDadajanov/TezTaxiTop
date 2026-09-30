@@ -125,6 +125,49 @@ def _model_point(obj, prefix: str) -> tuple[Decimal, Decimal] | None:
     )
 
 
+#: ``(write key, snapshot prefix, catalogue FK field)`` for one route endpoint.
+#: Shared by both update paths so a map pin and a catalogue entry can never be
+#: resolved differently for a trip than for a passenger request.
+_ENDPOINT_WRITE_FIELDS = (
+    ("origin", "from", "from_location"),
+    ("destination", "to", "to_location"),
+)
+
+
+def _resolve_endpoint_updates(changes: dict) -> dict[str, object]:
+    """Pop the endpoint keys out of ``changes``, returning their snapshot columns.
+
+    Mirrors the precedence of :func:`create_trip`: an endpoint described by a
+    catalogue ``Location`` resolves from that row, and an endpoint described by a
+    bare map pin resolves from its coordinates.
+
+    A pin also **clears** its endpoint's catalogue FK. Leaving the old FK in
+    place would keep the read layer preferring it - ``_endpoint_payload`` returns
+    the catalogue row whenever one is linked - so a trip edited onto a new pin
+    would still display the place the driver moved away from.
+    """
+    from apps.locations.services import build_point_snapshot
+
+    snapshot_columns: dict[str, object] = {}
+    for write_key, prefix, location_field in _ENDPOINT_WRITE_FIELDS:
+        payload = changes.pop(write_key, None)
+        if location_field in changes:
+            # An explicitly resupplied catalogue entry is the deliberate choice,
+            # so the snapshot is rebuilt from it rather than from a bare pin.
+            # That keeps the two halves of the endpoint from disagreeing.
+            location = changes[location_field]
+            if location is not None or payload is not None:
+                snapshot_columns.update(
+                    build_point_snapshot(prefix, location=location, **(payload or {}))
+                )
+            continue
+        if payload is None:
+            continue
+        snapshot_columns.update(build_point_snapshot(prefix, **payload))
+        changes[location_field] = None
+    return snapshot_columns
+
+
 def _assert_distinct_endpoints(
     *,
     from_location_id,
@@ -332,14 +375,7 @@ def update_trip(trip: DriverTrip, **changes) -> DriverTrip:
     A new ``origin`` / ``destination`` is resolved before the transaction opens,
     for the same reason as in :func:`create_trip`.
     """
-    from apps.locations.services import build_point_snapshot
-
-    snapshot_columns: dict[str, object] = {}
-    for write_key, prefix in (("origin", "from"), ("destination", "to")):
-        payload = changes.pop(write_key, None)
-        if payload is not None:
-            snapshot_columns.update(build_point_snapshot(prefix, **payload))
-
+    snapshot_columns = _resolve_endpoint_updates(changes)
     return _update_trip_in_transaction(trip.pk, changes, snapshot_columns)
 
 
@@ -676,16 +712,10 @@ def update_passenger_request(passenger_request: PassengerRequest, **changes) -> 
     """Update an active passenger request.
 
     A new ``origin`` / ``destination`` is resolved before the transaction opens,
-    exactly like :func:`create_passenger_request`.
+    exactly like :func:`create_passenger_request`, and through the same helper as
+    :func:`update_trip` so both sides behave identically.
     """
-    from apps.locations.services import build_point_snapshot
-
-    snapshot_columns: dict[str, object] = {}
-    for write_key, prefix in (("origin", "from"), ("destination", "to")):
-        payload = changes.pop(write_key, None)
-        if payload is not None:
-            snapshot_columns.update(build_point_snapshot(prefix, **payload))
-
+    snapshot_columns = _resolve_endpoint_updates(changes)
     return _update_passenger_request_in_transaction(
         passenger_request.pk, changes, snapshot_columns
     )
