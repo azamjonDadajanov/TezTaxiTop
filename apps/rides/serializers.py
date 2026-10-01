@@ -432,3 +432,74 @@ class NearbyRequestsResponseSerializer(serializers.Serializer):
     radius_km = serializers.FloatField()
     count = serializers.IntegerField()
     results = NearbyPassengerRequestSerializer(many=True)
+
+
+class NearbyDriverTripSerializer(DriverTripSerializer):
+    """A trip as a passenger reads it on the map.
+
+    Three differences from :class:`DriverTripSerializer`:
+
+    * ``driver_phone`` and ``driver_telegram_id`` are dropped. This feed lists
+      *every* taxi near the caller, so broadcasting each driver's number before
+      an order exists would leak it platform-wide. The Telegram username is the
+      contact channel until then, exactly as on the driver map.
+    * ``driver_username``, ``vehicle_color`` and ``vehicle_seats_count`` are
+      added: the marker is drawn in the car's colour and the card quotes how
+      many passengers the car actually takes.
+    * ``distance_km`` / ``trip_km`` are added - the passenger-to-pickup distance
+      the marker is coloured by, and the ride length the route line spans. Both
+      use the same haversine helper as the rest of the platform.
+    """
+
+    driver_username = serializers.CharField(source="driver.user.username", read_only=True)
+    vehicle_color = serializers.CharField(source="vehicle.color", read_only=True)
+    vehicle_seats_count = serializers.IntegerField(source="vehicle.seats_count", read_only=True)
+    driver_rating_count = serializers.IntegerField(source="driver.rating_count", read_only=True)
+    distance_km = serializers.SerializerMethodField()
+    trip_km = serializers.SerializerMethodField()
+
+    class Meta(DriverTripSerializer.Meta):
+        fields = (
+            tuple(
+                field
+                for field in DriverTripSerializer.Meta.fields
+                if field not in {"driver_phone", "driver_telegram_id"}
+            )
+            + (
+                "driver_username",
+                "driver_rating_count",
+                "vehicle_color",
+                "vehicle_seats_count",
+                "distance_km",
+                "trip_km",
+            )
+        )
+        read_only_fields = fields
+
+    def get_distance_km(self, obj) -> float:
+        """Passenger-to-pickup distance, computed by the selector."""
+        distance = self.context.get("distances", {}).get(obj.pk)
+        return None if distance is None else round(float(distance), 1)
+
+    def get_trip_km(self, obj) -> float | None:
+        """Pickup-to-dropoff length, or ``None`` when an endpoint is unresolved."""
+        from apps.rides.services import haversine_km
+
+        if not (obj.has_origin_coordinates() and obj.has_destination_coordinates()):
+            return None
+        length = float(
+            haversine_km(
+                (obj.from_latitude, obj.from_longitude),
+                (obj.to_latitude, obj.to_longitude),
+            )
+        )
+        return round(length, 1)
+
+
+class NearbyTripsResponseSerializer(serializers.Serializer):
+    """Envelope of the passenger map feed."""
+
+    center = serializers.DictField(child=serializers.DecimalField(max_digits=9, decimal_places=6))
+    radius_km = serializers.FloatField()
+    count = serializers.IntegerField()
+    results = NearbyDriverTripSerializer(many=True)

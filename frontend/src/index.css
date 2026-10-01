@@ -355,6 +355,16 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
 .driver-map-pin svg { fill: currentColor; transform: rotate(45deg); }
 .driver-map-pin-near { color: #fff; background: #c9402f; }.driver-map-pin-mid { color: #fff; background: #e08a2b; }.driver-map-pin-far { color: #fff; background: #2f8f68; }
 .driver-map-pin-active { transform: rotate(-45deg) scale(1.22); box-shadow: 0 0 0 4px rgba(25,60,45,.22), 0 6px 16px rgba(19,49,38,.3); }
+/* Taxi markers wear the car's own paint: the ink flips to dark on a pale body so
+   the glyph stays readable on a white taxi as well as on a black one. */
+.driver-map-pin[style*="--car-body"] { color: var(--car-ink, #1b1f22); background: var(--car-body); }
+.driver-map-car-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 2.5px solid white; border-radius: 50%; color: #1b1f22; background: var(--car-body, #e9ece7); box-shadow: 0 0 0 1px rgba(19,49,38,.14); }
+.driver-map-car-avatar svg { width: 19px; height: 19px; fill: currentColor; }
+.driver-map-car-avatar-unknown { background: #e9ece7; }
+.driver-map-sheet-car { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #e2e9dd; border-radius: 12px; color: #55635a; background: #f6f9f3; font-size: 11px; }
+.driver-map-sheet-car strong { color: var(--ink); font-size: 12px; }
+.driver-map-sheet-car span { display: inline-flex; align-items: center; gap: 4px; }
+.driver-map-plate { padding: 2px 7px; border: 1px solid #cfd8c8; border-radius: 6px; color: var(--ink); background: #fff; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .driver-map-arrow { display: grid; width: 30px; height: 30px; place-items: center; color: #1f3d33; filter: drop-shadow(0 2px 5px rgba(19,49,38,.3)); }
 .driver-map-arrow svg { fill: currentColor; }
 .driver-map-driver { display: grid; width: 20px; height: 20px; place-items: center; border: 3px solid white; border-radius: 50%; color: white; background: #1f4f7a; box-shadow: 0 0 0 3px rgba(31,79,122,.25); }

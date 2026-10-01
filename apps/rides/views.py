@@ -26,8 +26,10 @@ from apps.rides.permissions import IsPassengerRequestOwner, IsTripDriver
 from apps.rides.serializers import (
     DriverTripSerializer,
     DriverTripWriteSerializer,
+    NearbyDriverTripSerializer,
     NearbyPassengerRequestSerializer,
     NearbyRequestsResponseSerializer,
+    NearbyTripsResponseSerializer,
     PassengerRequestSerializer,
     PassengerRequestWriteSerializer,
 )
@@ -302,6 +304,24 @@ def _map_radius_km(request) -> float:
     return min(value, conf.DRIVER_MAP_MAX_RADIUS_KM)
 
 
+def _passenger_map_radius_km(request) -> float:
+    """Radius of the passenger ("taxis near me") feed.
+
+    Same parsing as the driver feed but against the passenger-map settings, so
+    the two maps can be tuned independently.
+    """
+    raw = request.query_params.get("radius_km")
+    if raw is None or raw == "":
+        return conf.PASSENGER_MAP_RADIUS_KM
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise DRFValidationError({"radius_km": "Masofani km da kiriting (masalan 25)."}) from exc
+    if value <= 0:
+        raise DRFValidationError({"radius_km": "Masofa 0 dan katta bo'lishi shart."})
+    return min(value, conf.PASSENGER_MAP_MAX_RADIUS_KM)
+
+
 class NearbyPassengerRequestsView(APIView):
     """``GET /api/v1/rides/requests/nearby/`` - the driver map feed.
 
@@ -361,6 +381,68 @@ class NearbyPassengerRequestsView(APIView):
                 "count": len(measured),
                 "results": NearbyPassengerRequestSerializer(
                     [passenger_request for passenger_request, _ in measured],
+                    many=True,
+                    context={"distances": distances},
+                ).data,
+            }
+        )
+
+
+class NearbyDriverTripsView(APIView):
+    """``GET /api/v1/rides/trips/nearby/`` - the passenger map feed.
+
+    The mirror of :class:`NearbyPassengerRequestsView`: bookable taxi trips whose
+    pickup point lies within the requested radius of the passenger, nearest
+    first. The caller's own trip is filtered out when they are also a driver, so
+    the map never offers a car they are driving themselves.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = NearbyTripsResponseSerializer
+
+    @extend_schema(
+        summary="Yaqin taksilar (yo'lovchi xaritasi)",
+        description=(
+            "Band qilishga ochiq yo'lovlarni yo'lovchi joylashuvi atrofida, "
+            "masofa bo'yicha tartiblangan holda qaytaradi. Har bir elementda "
+            "`distance_km` (yo'lovchidan nuqtaga) va `trip_km` (nuqtadan "
+            "manzilgacha) bor. Haydovchining telefon raqami yuborilmaydi."
+        ),
+        parameters=[
+            OpenApiParameter("lat", float, required=True, description="Yo'lovchi kengligi (-90..90)"),
+            OpenApiParameter("lon", float, required=True, description="Yo'lovchi uzunligi (-180..180)"),
+            OpenApiParameter(
+                "radius_km",
+                float,
+                description=(
+                    f"Kutish radiusi, km (standart {int(conf.PASSENGER_MAP_RADIUS_KM)}, "
+                    f"maksimum {int(conf.PASSENGER_MAP_MAX_RADIUS_KM)})"
+                ),
+            ),
+        ],
+        responses={200: NearbyTripsResponseSerializer},
+    )
+    def get(self, request) -> Response:
+        latitude = _map_coordinate(request, "lat")
+        longitude = _map_coordinate(request, "lon")
+        if latitude is None or longitude is None:
+            raise DRFValidationError({"detail": "Xaritalash uchun lat va lon majburiy."})
+
+        radius_km = _passenger_map_radius_km(request)
+        measured = ride_selectors.get_nearby_trips(
+            latitude,
+            longitude,
+            radius_km,
+            exclude_driver=getattr(request.user, "driver_profile", None),
+        )[: conf.PASSENGER_MAP_MAX_RESULTS]
+        distances = {trip.pk: distance for trip, distance in measured}
+        return Response(
+            {
+                "center": {"latitude": latitude, "longitude": longitude},
+                "radius_km": radius_km,
+                "count": len(measured),
+                "results": NearbyDriverTripSerializer(
+                    [trip for trip, _ in measured],
                     many=True,
                     context={"distances": distances},
                 ).data,

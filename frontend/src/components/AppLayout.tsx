@@ -1,7 +1,7 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
-  Bell, CarFront, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut,
+  Bell, CarFront, CarTaxiFront, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut,
   Menu, MapPinned, MessageCircle, MoreHorizontal, NotebookTabs, Repeat2, Settings, ShieldCheck, Sparkles,
   Star, UserRound, UsersRound, WalletCards, X,
 } from 'lucide-react'
@@ -12,6 +12,7 @@ const allNavigation = [
   { to: '/onboarding', label: 'Ro‘yxatdan o‘tish', icon: Sparkles, group: 'Asosiy' },
   { to: '/trips', label: 'Safarlar', icon: CarFront, group: 'Safar' },
   { to: '/map', label: 'Xarita', icon: MapPinned, group: 'Safar' },
+  { to: '/taxi-map', label: 'Taksi xaritasi', icon: CarTaxiFront, group: 'Safar' },
   { to: '/vehicles', label: 'Avtomobillar', icon: CarFront, group: 'Safar' },
   { to: '/requests', label: 'So‘rovlar', icon: NotebookTabs, group: 'Safar' },
   { to: '/matching', label: 'Mos safarlar', icon: Repeat2, group: 'Safar' },
@@ -41,7 +42,7 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
   const canDriver = user?.role === 'driver' || user?.role === 'both'
   const navigation = allNavigation.filter((item) => {
     if (item.to === '/trips' || item.to === '/vehicles' || item.to === '/subscription' || item.to === '/map') return canDriver && mode === 'driver'
-    if (item.to === '/requests') return canPassenger && mode === 'passenger'
+    if (item.to === '/requests' || item.to === '/taxi-map') return canPassenger && mode === 'passenger'
     if (item.to === '/matching') return mode === 'passenger' ? canPassenger : canDriver
     return true
   })
@@ -49,7 +50,7 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
   const displayName = user?.full_name || user?.username || 'Foydalanuvchi'
   const bottomPaths = mode === 'driver'
     ? ['/', '/trips', '/map', '/matching']
-    : ['/', '/requests', '/matching', '/orders']
+    : ['/', '/taxi-map', '/requests', '/matching']
   const bottom = bottomPaths.map((to) => allNavigation.find((item) => item.to === to)).filter((item) => item !== undefined)
 
   function changeMode(next: 'passenger' | 'driver') {
@@ -57,7 +58,9 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
     localStorage.setItem('teztaxitop_mode', next)
     window.dispatchEvent(new Event('teztaxitop-mode-change'))
     const driverOnly = ['/trips', '/map']
-    if ((next === 'driver' && location.pathname === '/requests') || (next === 'passenger' && driverOnly.includes(location.pathname))) {
+    const passengerOnly = ['/requests', '/taxi-map']
+    const stranded = next === 'driver' ? passengerOnly.includes(location.pathname) : driverOnly.includes(location.pathname)
+    if (stranded) {
       navigate(next === 'driver' ? '/trips' : '/requests')
     }
   }

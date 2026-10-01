@@ -18,5 +18,6 @@ urlpatterns = [
     # non-slash segment, so `requests/nearby/` would otherwise be read as a
     # request id and answered with a 404.
     path("requests/nearby/", views.NearbyPassengerRequestsView.as_view(), name="nearby-requests"),
+    path("trips/nearby/", views.NearbyDriverTripsView.as_view(), name="nearby-trips"),
     path("", include(router.urls)),
 ]

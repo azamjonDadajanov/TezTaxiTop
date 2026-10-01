@@ -205,6 +205,28 @@ export type NearbyRequests = {
   count: number
   results: NearbyRequest[]
 }
+
+/** One taxi as the passenger map sees it. The same trip record as {@link Trip},
+ *  plus the two distances the map draws: `distance_km` from the passenger to the
+ *  pickup point (it colours the marker) and `trip_km` from the pickup point to
+ *  the drop-off (it spans the route line). The driver's phone and telegram id
+ *  are deliberately absent - the map is a broadcast of everyone's cars. */
+export type NearbyTrip = Trip & {
+  driver_username?: string
+  driver_rating_count?: number
+  vehicle_color?: string
+  vehicle_seats_count?: number
+  distance_km: number
+  trip_km: number | null
+}
+
+/** Envelope of `GET /rides/trips/nearby/`. */
+export type NearbyTrips = {
+  center: { latitude: number; longitude: number }
+  radius_km: number
+  count: number
+  results: NearbyTrip[]
+}
 export type Order = ApiItem & {
   trip: number
   trip_route?: string

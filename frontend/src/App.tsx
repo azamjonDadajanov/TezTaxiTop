@@ -10,7 +10,7 @@ import { TripsPage, RequestsPage, MatchingPage } from './pages/RidePages'
 import { OrdersPage, SubscriptionPage, PaymentsPage } from './pages/CommercePages'
 import { VehiclesPage } from './pages/VehiclesPage'
 import { NotificationsPage, ChatPage, ReviewsPage, SupportPage } from './pages/CommunicationPages'
-import { DriverMapPage } from './pages/MapPages'
+import { DriverMapPage, PassengerMapPage } from './pages/MapPages'
 
 function AuthGate() {
   const { user, checking, authError, signInWithTelegram } = useAuth()
@@ -73,6 +73,7 @@ function ApplicationRoutes() {
         </Route>
         <Route element={<RoleAccess role="passenger" />}>
           <Route path="requests" element={<RequestsPage />} />
+          <Route path="taxi-map" element={<PassengerMapPage />} />
         </Route>
         <Route element={<RoleAccess role={user.role === 'driver' ? 'driver' : 'passenger'} />}>
           <Route path="matching" element={<MatchingPage />} />

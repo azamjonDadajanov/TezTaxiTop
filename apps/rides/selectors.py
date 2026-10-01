@@ -414,3 +414,78 @@ def get_nearby_requests(
     inside = [pair for pair in measured if pair[1] <= float(radius_km)]
     inside.sort(key=lambda pair: (pair[1], pair[0].departure_from, pair[0].pk))
     return inside
+
+
+# ---------------------------------------------------------------------------
+# Driver trip - passenger map ("taxis near me")
+# ---------------------------------------------------------------------------
+def get_map_trip_queryset() -> QuerySet[DriverTrip]:
+    """Lean queryset for the passenger map feed.
+
+    Mirrors :func:`get_map_request_queryset`: driver, user and vehicle come
+    along because a taxi marker is drawn from all three, but nothing that only
+    the trip *detail* view needs is joined.
+    """
+    return DriverTrip.objects.select_related(
+        "driver__user",
+        "vehicle",
+        "from_location__district__region",
+        "to_location__district__region",
+    )
+
+
+def get_nearby_trips(
+    latitude,
+    longitude,
+    radius_km: float,
+    *,
+    exclude_driver=None,
+) -> list[tuple[DriverTrip, float]]:
+    """Bookable trips whose pickup point is within ``radius_km``, nearest first.
+
+    The passenger-map counterpart of :func:`get_nearby_requests`, measured with
+    the same :func:`apps.rides.services.haversine_km` so a distance quoted on
+    either map means the same thing.
+
+    Only trips a passenger can actually board are returned: ``active`` with a
+    free seat and a departure that has not passed. A cancelled, expired or
+    already-full trip has nothing to offer, so listing it would only make the
+    marker a dead end.
+
+    Ordered by ``(distance, departure_time, pk)`` - the trailing primary key
+    makes it a total order, so equal distances always come back identically.
+    """
+    from apps.core import conf
+    from apps.rides.services import haversine_km
+
+    min_latitude, max_latitude, min_longitude, max_longitude = bounding_box(
+        latitude, longitude, radius_km
+    )
+    candidates = (
+        get_map_trip_queryset()
+        .bookable()
+        .filter(
+            departure_time__gte=timezone.now() - timedelta(minutes=conf.TRIP_DEPARTURE_GRACE_MINUTES),
+            from_latitude__isnull=False,
+            from_longitude__isnull=False,
+            from_latitude__gte=min_latitude,
+            from_latitude__lte=max_latitude,
+            from_longitude__gte=min_longitude,
+            from_longitude__lte=max_longitude,
+        )
+    )
+    if exclude_driver is not None:
+        # A driver who is also a passenger must not be offered their own trip.
+        candidates = candidates.exclude(driver=exclude_driver)
+
+    origin = (float(latitude), float(longitude))
+    measured = [
+        (
+            trip,
+            float(haversine_km(origin, (trip.from_latitude, trip.from_longitude))),
+        )
+        for trip in candidates
+    ]
+    inside = [pair for pair in measured if pair[1] <= float(radius_km)]
+    inside.sort(key=lambda pair: (pair[1], pair[0].departure_time, pair[0].pk))
+    return inside
