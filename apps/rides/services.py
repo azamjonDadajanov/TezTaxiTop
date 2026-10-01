@@ -41,6 +41,7 @@ from apps.core.exceptions import (
     TripAlreadyCancelled,
     TripAlreadyCompleted,
     TripError,
+    TripNotActive,
     TripNotEditable,
 )
 from apps.locations.models import Location
@@ -632,10 +633,9 @@ def reserve_seats(trip: DriverTrip, seats: int) -> DriverTrip:
     locked_trip = _lock_trip(trip.pk)
 
     if locked_trip.status not in BOOKABLE_TRIP_STATUSES:
-        raise TripError(
+        raise TripNotActive(
             f"Bu yo'lov '{locked_trip.get_status_display()}' holatida, yangi buyurtma qabul qilinmaydi.",
-            code="trip_not_bookable",
-            status_code=409,
+            details={"status": locked_trip.status, "trip_id": locked_trip.pk},
         )
     if locked_trip.available_seats < seats:
         raise InsufficientSeats(
