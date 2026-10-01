@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Bell, CarFront, Clock3, MapPin, Plus, ShieldCheck, Sparkles, UsersRound } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bell, CarFront, Clock3, MapPin, MapPinned, Plus, ShieldCheck, Sparkles, UsersRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api, currentDateLabel, dateTime, endpointLabel, readableError, toArray, type Order, type PassengerRequest, type Trip } from '../api'
 import { useAuth } from '../authContext'
@@ -39,7 +39,7 @@ export function DashboardPage() {
           })}</div>
         </ContentState>
       </section>
-      <aside className="dashboard-aside"><div className="aside-heading"><span className="eyebrow">TEZKOR HAVOLALAR</span><h2>Bir qadamda</h2></div><Link className="quick-link" to="/matching"><span className="quick-icon quick-match"><MapPin size={18} /></span><span><strong>Safarlarni qidirish</strong><small>Yo‘nalish bo‘yicha mosliklar</small></span><ArrowRight size={16} /></Link><Link className="quick-link" to="/orders"><span className="quick-icon quick-book"><UsersRound size={18} /></span><span><strong>Buyurtmalar</strong><small>{activeOrders} ta ochiq buyurtma</small></span><ArrowRight size={16} /></Link><Link className="quick-link" to="/notifications"><span className="quick-icon quick-alert"><Bell size={18} /></span><span><strong>Xabarlar</strong><small>{unread.data?.unread ?? 0} ta yangi bildirishnoma</small></span><ArrowRight size={16} /></Link></aside>
+      <aside className="dashboard-aside"><div className="aside-heading"><span className="eyebrow">TEZKOR HAVOLALAR</span><h2>Bir qadamda</h2></div>{isDriver && <Link className="quick-link" to="/map"><span className="quick-icon quick-map"><MapPinned size={18} /></span><span><strong>Xaritada ko‘rish</strong><small>Atrofingizdagi 25 km so‘rovlar</small></span><ArrowRight size={16} /></Link>}<Link className="quick-link" to="/matching"><span className="quick-icon quick-match"><MapPin size={18} /></span><span><strong>Safarlarni qidirish</strong><small>Yo‘nalish bo‘yicha mosliklar</small></span><ArrowRight size={16} /></Link><Link className="quick-link" to="/orders"><span className="quick-icon quick-book"><UsersRound size={18} /></span><span><strong>Buyurtmalar</strong><small>{activeOrders} ta ochiq buyurtma</small></span><ArrowRight size={16} /></Link><Link className="quick-link" to="/notifications"><span className="quick-icon quick-alert"><Bell size={18} /></span><span><strong>Xabarlar</strong><small>{unread.data?.unread ?? 0} ta yangi bildirishnoma</small></span><ArrowRight size={16} /></Link></aside>
     </div>
   </>
 }

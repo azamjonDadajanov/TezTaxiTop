@@ -241,13 +241,17 @@ class RouteEndpointWriteMixin:
             return
         if origin.get("latitude") is None or destination.get("latitude") is None:
             return
-        if (
-            origin.get("latitude") == destination.get("latitude")
-            and origin.get("longitude") == destination.get("longitude")
-        ):
-            raise serializers.ValidationError(
-                {"destination": "Qayerdan va qayerga bir xil bo'lishi mumkin emas."}
-            )
+
+        # Asked of the service layer so the API answers with the same bound and
+        # the same wording the bot and the Mini App show.
+        from apps.rides.services import validate_route_points
+
+        error = validate_route_points(
+            (origin["latitude"], origin["longitude"]),
+            (destination["latitude"], destination["longitude"]),
+        )
+        if error:
+            raise serializers.ValidationError({"destination": error})
 
 
 class DriverTripWriteSerializer(RouteEndpointWriteMixin, serializers.ModelSerializer):
@@ -369,3 +373,62 @@ class TripStatusUpdateSerializer(serializers.Serializer):
 
     status = serializers.ChoiceField(choices=DriverTripStatus.choices)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class NearbyPassengerRequestSerializer(PassengerRequestSerializer):
+    """A passenger request as a driver reads it on the map.
+
+    Two differences from :class:`PassengerRequestSerializer`:
+
+    * ``passenger_phone`` is dropped. This feed lists *other* people's requests,
+      so handing every driver every passenger's number before an order exists
+      would leak it platform-wide. The Telegram username is the contact channel
+      until then.
+    * ``distance_km`` / ``trip_km`` are added - the driver-to-pickup distance the
+      marker is coloured by, and the ride length the arrow spans. Both come from
+      ``context["distances"]`` / the request's own snapshot so they are measured
+      with the same formula everywhere else in the product.
+    """
+
+    passenger_username = serializers.CharField(source="passenger.username", read_only=True)
+    distance_km = serializers.SerializerMethodField()
+    trip_km = serializers.SerializerMethodField()
+
+    class Meta(PassengerRequestSerializer.Meta):
+        fields = (
+            tuple(
+                field
+                for field in PassengerRequestSerializer.Meta.fields
+                if field != "passenger_phone"
+            )
+            + ("passenger_username", "distance_km", "trip_km")
+        )
+        read_only_fields = fields
+
+    def get_distance_km(self, obj) -> float:
+        """Driver-to-pickup distance, computed by the selector."""
+        distance = self.context.get("distances", {}).get(obj.pk)
+        return None if distance is None else round(float(distance), 1)
+
+    def get_trip_km(self, obj) -> float | None:
+        """Pickup-to-dropoff length, or ``None`` when an endpoint is unresolved."""
+        from apps.rides.services import haversine_km
+
+        if not (obj.has_origin_coordinates() and obj.has_destination_coordinates()):
+            return None
+        length = float(
+            haversine_km(
+                (obj.from_latitude, obj.from_longitude),
+                (obj.to_latitude, obj.to_longitude),
+            )
+        )
+        return round(length, 1)
+
+
+class NearbyRequestsResponseSerializer(serializers.Serializer):
+    """Envelope of the driver map feed."""
+
+    center = serializers.DictField(child=serializers.DecimalField(max_digits=9, decimal_places=6))
+    radius_km = serializers.FloatField()
+    count = serializers.IntegerField()
+    results = NearbyPassengerRequestSerializer(many=True)

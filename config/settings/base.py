@@ -370,6 +370,14 @@ TRIP_DEPARTURE_GRACE_MINUTES = int(os.environ.get("TRIP_DEPARTURE_GRACE_MINUTES"
 MATCHING_TIME_WINDOW_HOURS = int(os.environ.get("MATCHING_TIME_WINDOW_HOURS", "6"))
 MATCHING_MAX_RESULTS = int(os.environ.get("MATCHING_MAX_RESULTS", "20"))
 
+# --- Driver map -------------------------------------------------------------
+# How far the "passengers near me" map reaches when the client does not ask for a
+# radius of its own, how far a client may stretch it, and how many markers the
+# response may carry.
+DRIVER_MAP_RADIUS_KM = env_int("DRIVER_MAP_RADIUS_KM", 25)
+DRIVER_MAP_MAX_RADIUS_KM = env_int("DRIVER_MAP_MAX_RADIUS_KM", 50)
+DRIVER_MAP_MAX_RESULTS = env_int("DRIVER_MAP_MAX_RESULTS", 120)
+
 # Periodic maintenance. Every task is idempotent, so a missed or duplicated
 # run never corrupts data.
 CELERY_BEAT_SCHEDULE = {

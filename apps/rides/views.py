@@ -6,12 +6,15 @@ service calls and service results into responses.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.core import conf
 from apps.core.exceptions import BusinessError
@@ -23,6 +26,8 @@ from apps.rides.permissions import IsPassengerRequestOwner, IsTripDriver
 from apps.rides.serializers import (
     DriverTripSerializer,
     DriverTripWriteSerializer,
+    NearbyPassengerRequestSerializer,
+    NearbyRequestsResponseSerializer,
     PassengerRequestSerializer,
     PassengerRequestWriteSerializer,
 )
@@ -266,3 +271,98 @@ class PassengerRequestViewSet(
         ranked = rank_trips_for_request(passenger_request)
         trips = [trip for trip, _score in ranked][: conf.MATCHING_MAX_RESULTS]
         return Response(DriverTripSerializer(trips, many=True).data)
+
+
+def _map_coordinate(request, name: str) -> Decimal | None:
+    """Read and range-check one driver-map coordinate from the query string."""
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        value = Decimal(raw)
+    except (ArithmeticError, ValueError) as exc:
+        raise DRFValidationError({name: "Raqamli koordinata kiriting."}) from exc
+    lower, upper = (Decimal("-90"), Decimal("90")) if name == "lat" else (Decimal("-180"), Decimal("180"))
+    if not (lower <= value <= upper):
+        raise DRFValidationError({name: f"Qiymat {lower} va {upper} orasida bo'lishi kerak."})
+    return value
+
+
+def _map_radius_km(request) -> float:
+    """Radius of the map feed, clamped to the configured ceiling."""
+    raw = request.query_params.get("radius_km")
+    if raw is None or raw == "":
+        return conf.DRIVER_MAP_RADIUS_KM
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise DRFValidationError({"radius_km": "Masofani km da kiriting (masalan 25)."}) from exc
+    if value <= 0:
+        raise DRFValidationError({"radius_km": "Masofa 0 dan katta bo'lishi shart."})
+    return min(value, conf.DRIVER_MAP_MAX_RADIUS_KM)
+
+
+class NearbyPassengerRequestsView(APIView):
+    """``GET /api/v1/rides/requests/nearby/`` - the driver map feed.
+
+    Lists the still-active passenger requests whose pickup point lies within the
+    requested radius of the driver, nearest first. Unlike the request list this is
+    *not* scoped to the caller's own rows - seeing other people's requests is the
+    whole point of the map - so the driver's own passenger request is filtered out
+    explicitly instead of by the owner rule the list view applies.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = NearbyRequestsResponseSerializer
+
+    @extend_schema(
+        summary="Yaqin yo'lovchi so'rovlari (haydovchi xaritasi)",
+        description=(
+            "Faol so'rovlarni haydovchi joylashuvi atrofida, masofa bo'yicha "
+            "tartiblangan holda qaytaradi. Har bir elementda `distance_km` "
+            "(haydovchidan nuqtaga) va `trip_km` (nuqtadan manzilgacha) bor."
+        ),
+        parameters=[
+            OpenApiParameter("lat", float, required=True, description="Haydovchi kengligi (-90..90)"),
+            OpenApiParameter("lon", float, required=True, description="Haydovchi uzunligi (-180..180)"),
+            OpenApiParameter(
+                "radius_km",
+                float,
+                description=(
+                    f"Kutish radiusi, km (standart {int(conf.DRIVER_MAP_RADIUS_KM)}, "
+                    f"maksimum {int(conf.DRIVER_MAP_MAX_RADIUS_KM)})"
+                ),
+            ),
+        ],
+        responses={200: NearbyRequestsResponseSerializer},
+    )
+    def get(self, request) -> Response:
+        driver = getattr(request.user, "driver_profile", None)
+        if driver is None and not request.user.is_staff:
+            raise PermissionDenied("Bu ro'yxat faqat haydovchilar uchun.")
+
+        latitude = _map_coordinate(request, "lat")
+        longitude = _map_coordinate(request, "lon")
+        if latitude is None or longitude is None:
+            raise DRFValidationError({"detail": "Xaritalash uchun lat va lon majburiy."})
+
+        radius_km = _map_radius_km(request)
+        measured = ride_selectors.get_nearby_requests(
+            latitude,
+            longitude,
+            radius_km,
+            exclude_passenger=request.user,
+        )[: conf.DRIVER_MAP_MAX_RESULTS]
+        distances = {passenger_request.pk: distance for passenger_request, distance in measured}
+        return Response(
+            {
+                "center": {"latitude": latitude, "longitude": longitude},
+                "radius_km": radius_km,
+                "count": len(measured),
+                "results": NearbyPassengerRequestSerializer(
+                    [passenger_request for passenger_request, _ in measured],
+                    many=True,
+                    context={"distances": distances},
+                ).data,
+            }
+        )

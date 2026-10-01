@@ -10,6 +10,7 @@ import { TripsPage, RequestsPage, MatchingPage } from './pages/RidePages'
 import { OrdersPage, SubscriptionPage, PaymentsPage } from './pages/CommercePages'
 import { VehiclesPage } from './pages/VehiclesPage'
 import { NotificationsPage, ChatPage, ReviewsPage, SupportPage } from './pages/CommunicationPages'
+import { DriverMapPage } from './pages/MapPages'
 
 function AuthGate() {
   const { user, checking, authError, signInWithTelegram } = useAuth()
@@ -66,6 +67,7 @@ function ApplicationRoutes() {
         <Route path="settings" element={<AccountPage section="settings" />} />
         <Route element={<RoleAccess role="driver" />}>
           <Route path="trips" element={<TripsPage />} />
+          <Route path="map" element={<DriverMapPage />} />
           <Route path="vehicles" element={<VehiclesPage />} />
           <Route path="subscription" element={<SubscriptionPage />} />
         </Route>

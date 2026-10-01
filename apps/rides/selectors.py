@@ -8,6 +8,7 @@ is defined in exactly one place.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import cos, radians
 from typing import Sequence
 
 from django.db.models import Q, QuerySet
@@ -300,3 +301,116 @@ def get_expired_request_candidates(expiry_hours: int) -> QuerySet[PassengerReque
         .filter(status=PassengerRequestStatus.ACTIVE, created_at__lte=deadline)
         .order_by("pk")
     )
+
+
+# ---------------------------------------------------------------------------
+# Passenger request - driver map ("passengers near me")
+# ---------------------------------------------------------------------------
+#: Kilometres per degree of latitude (mean value), the constant the Haversine
+#: helper in :mod:`apps.rides.services` implies.
+KM_PER_DEGREE_LATITUDE = 111.32
+
+#: Floor for ``cos(latitude)``: a single degree of longitude collapses to zero
+#: metres at the poles, and without the floor the longitude delta explodes.
+_MIN_COS_LATITUDE = 0.01
+
+
+def bounding_box(
+    latitude, longitude, radius_km: float
+) -> tuple[float, float, float, float]:
+    """``(min_lat, max_lat, min_lon, max_lon)`` covering ``radius_km`` around a point.
+
+    The circle is approximated by its bounding box so the expensive part of a
+    proximity search stays a plain range filter - answerable by PostgreSQL and
+    SQLite alike, with no geospatial extension installed. The exact circle test
+    runs afterwards on the small result of that filter.
+    """
+    center_latitude = float(latitude)
+    center_longitude = float(longitude)
+    latitude_delta = float(radius_km) / KM_PER_DEGREE_LATITUDE
+    # A meridian of longitude is only KM_PER_DEGREE_LATITUDE * cos(lat) long, so
+    # the same kilometres span more degrees the closer the point sits to a pole.
+    longitude_delta = min(
+        float(radius_km)
+        / (
+            KM_PER_DEGREE_LATITUDE
+            * max(abs(cos(radians(center_latitude))), _MIN_COS_LATITUDE)
+        ),
+        180.0,
+    )
+    return (
+        max(-90.0, center_latitude - latitude_delta),
+        min(90.0, center_latitude + latitude_delta),
+        max(-180.0, center_longitude - longitude_delta),
+        min(180.0, center_longitude + longitude_delta),
+    )
+
+
+def get_map_request_queryset() -> QuerySet[PassengerRequest]:
+    """Lean queryset for the map feed.
+
+    Skips the ``matches`` prefetch of :func:`get_request_queryset`: a map draws
+    the pickup point, never the ranking, so that query would be wasted on every
+    refresh.
+    """
+    return PassengerRequest.objects.select_related(
+        "passenger",
+        "from_location__district__region",
+        "to_location__district__region",
+    )
+
+
+def get_nearby_requests(
+    latitude,
+    longitude,
+    radius_km: float,
+    *,
+    exclude_passenger=None,
+) -> list[tuple[PassengerRequest, float]]:
+    """Active, still-departable requests whose pickup point is within ``radius_km``.
+
+    Returns ``(request, distance_km)`` pairs, nearest first. The distance is the
+    great-circle value from :func:`apps.rides.services.haversine_km`, so the
+    number the driver reads on the map is the number the rest of the platform
+    quotes for the same two points.
+
+    The order is ``(distance, departure_from, pk)``; the last element makes it a
+    total order, so two requests at the same distance always come back in the
+    same sequence.
+    """
+    from apps.rides.services import haversine_km
+
+    min_latitude, max_latitude, min_longitude, max_longitude = bounding_box(
+        latitude, longitude, radius_km
+    )
+    candidates = get_map_request_queryset().filter(
+        status=PassengerRequestStatus.ACTIVE,
+        departure_until__gte=timezone.now(),
+        from_latitude__isnull=False,
+        from_longitude__isnull=False,
+        from_latitude__gte=min_latitude,
+        from_latitude__lte=max_latitude,
+        from_longitude__gte=min_longitude,
+        from_longitude__lte=max_longitude,
+    )
+    if exclude_passenger is not None:
+        # A driver who is also a passenger must not see their own request on the
+        # map as if it were somebody else's customer.
+        candidates = candidates.exclude(passenger=exclude_passenger)
+
+    origin = (float(latitude), float(longitude))
+    measured = [
+        (
+            passenger_request,
+            float(
+                haversine_km(
+                    origin,
+                    (passenger_request.from_latitude, passenger_request.from_longitude),
+                )
+            ),
+        )
+        for passenger_request in candidates
+    ]
+    inside = [pair for pair in measured if pair[1] <= float(radius_km)]
+    inside.sort(key=lambda pair: (pair[1], pair[0].departure_from, pair[0].pk))
+    return inside

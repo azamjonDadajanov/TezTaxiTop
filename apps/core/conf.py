@@ -40,6 +40,17 @@ MATCHING_TIME_WINDOW_HOURS: int = getattr(settings, "MATCHING_TIME_WINDOW_HOURS"
 #: Upper bound of trips returned by `matching.services.find_matching_trips`.
 MATCHING_MAX_RESULTS: int = getattr(settings, "MATCHING_MAX_RESULTS", 20)
 
+# --- Driver map -------------------------------------------------------------
+
+#: Default radius (km) of the "passengers near me" map feed.
+DRIVER_MAP_RADIUS_KM: float = float(getattr(settings, "DRIVER_MAP_RADIUS_KM", 25))
+
+#: Hard ceiling for a client supplied radius (km).
+DRIVER_MAP_MAX_RADIUS_KM: float = float(getattr(settings, "DRIVER_MAP_MAX_RADIUS_KM", 50))
+
+#: Upper bound of markers one map response may carry.
+DRIVER_MAP_MAX_RESULTS: int = getattr(settings, "DRIVER_MAP_MAX_RESULTS", 120)
+
 
 def require_active_subscription_to_drive() -> bool:
     """Return whether creating a trip requires an active subscription."""

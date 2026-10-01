@@ -13,4 +13,10 @@ router = DefaultRouter()
 router.register("trips", views.DriverTripViewSet, basename="trip")
 router.register("requests", views.PassengerRequestViewSet, basename="passenger-request")
 
-urlpatterns = [path("", include(router.urls))]
+urlpatterns = [
+    # Declared before the router: the router's detail route matches any
+    # non-slash segment, so `requests/nearby/` would otherwise be read as a
+    # request id and answered with a 404.
+    path("requests/nearby/", views.NearbyPassengerRequestsView.as_view(), name="nearby-requests"),
+    path("", include(router.urls)),
+]

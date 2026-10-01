@@ -176,11 +176,34 @@ export type PassengerRequest = ApiItem & {
   from_location_detail?: { name: string; region: string } | null
   to_location_detail?: { name: string; region: string } | null
   passenger_count: number
+  passenger_name?: string
+  comment?: string | null
+  created_at?: string
+  updated_at?: string
   departure_from?: string | null
   departure_until?: string | null
   max_price_per_seat?: number | string | null
   status: string
   status_display?: string
+}
+
+/** One passenger request as the driver map sees it. Same record as
+ *  {@link PassengerRequest}, plus the two distances the map draws: `distance_km`
+ *  from the driver to the pickup point (it colours the marker) and `trip_km`
+ *  from the pickup point to the drop-off (it spans the arrow). `passenger_phone`
+ *  is deliberately absent - the map is a broadcast of other people's requests. */
+export type NearbyRequest = PassengerRequest & {
+  passenger_username?: string
+  distance_km: number
+  trip_km: number | null
+}
+
+/** Envelope of `GET /rides/requests/nearby/`. */
+export type NearbyRequests = {
+  center: { latitude: number; longitude: number }
+  radius_km: number
+  count: number
+  results: NearbyRequest[]
 }
 export type Order = ApiItem & {
   trip: number
