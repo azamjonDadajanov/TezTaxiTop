@@ -471,8 +471,8 @@ class BotServiceTests(TransactionTestCase):
 
         passenger_request = await bot_passenger.create_passenger_request(
             user_id=self.user.telegram_id,
-            origin_location_id=self.origin.pk,
-            destination_location_id=self.destination.pk,
+            origin={"latitude": "41.300000", "longitude": "69.200000"},
+            destination={"latitude": "41.400000", "longitude": "69.300000"},
             departure_date=departure_date,
             departure_time=time(14, 30),
             passenger_count=2,
@@ -481,26 +481,42 @@ class BotServiceTests(TransactionTestCase):
         )
 
         self.assertEqual(passenger_request.passenger_id, self.user.pk)
-        self.assertEqual(passenger_request.from_location_id, self.origin.pk)
-        self.assertEqual(passenger_request.to_location_id, self.destination.pk)
+        self.assertIsNone(passenger_request.from_location_id)
+        self.assertEqual(passenger_request.from_latitude, Decimal("41.300000"))
+        self.assertEqual(passenger_request.to_latitude, Decimal("41.400000"))
         self.assertEqual(passenger_request.departure_from.date(), departure_date)
         self.assertTrue(timezone.is_aware(passenger_request.departure_from))
         self.assertEqual(passenger_request.max_price_per_seat, Decimal("25000.00"))
         self.assertEqual(passenger_request.comment, "Window seat")
 
-    async def test_nearest_location_resolves_to_active_catalog_entry(self) -> None:
-        nearest = await bot_locations.get_nearest_location_from_coordinates(
-            41.301,
-            69.201,
-        )
+    async def test_telegram_location_is_not_snapped_to_the_catalogue(self) -> None:
+        """Regression: two pins 15 km apart used to collapse onto one catalogue
+        row, so the route was rejected as "origin equals destination"."""
+        point = await bot_locations.normalize_location(41.301, 69.201)
 
-        self.assertEqual(nearest.pk, self.origin.pk)
+        self.assertEqual(point["latitude"], Decimal("41.301"))
+        self.assertEqual(point["longitude"], Decimal("69.201"))
 
-    async def test_nearest_location_rejects_invalid_coordinates(self) -> None:
+    async def test_invalid_coordinates_are_rejected(self) -> None:
         from apps.core.exceptions import BusinessValidationError
 
         with self.assertRaises(BusinessValidationError):
-            await bot_locations.get_nearest_location_from_coordinates(91, 0)
+            await bot_locations.normalize_location(91, 0)
+
+    def test_route_closer_than_the_minimum_is_refused(self) -> None:
+        near = {"latitude": Decimal("41.300000"), "longitude": Decimal("69.200000")}
+        # ~1 km north: a valid pin, but not a ride.
+        close = {"latitude": Decimal("41.309000"), "longitude": Decimal("69.200000")}
+
+        self.assertIsNotNone(bot_locations.route_error(near, close))
+        self.assertLess(bot_locations.route_distance_km(near, close), 5.0)
+
+    def test_route_farther_than_the_minimum_is_accepted(self) -> None:
+        origin = {"latitude": Decimal("41.300000"), "longitude": Decimal("69.200000")}
+        destination = {"latitude": Decimal("41.400000"), "longitude": Decimal("69.300000")}
+
+        self.assertIsNone(bot_locations.route_error(origin, destination))
+        self.assertGreater(bot_locations.route_distance_km(origin, destination), 5.0)
 
     async def test_driver_onboarding_creates_backend_driver_profile(self) -> None:
         profile = await platform.register_driver(self.user.telegram_id)

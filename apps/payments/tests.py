@@ -334,3 +334,140 @@ class SubscriptionLinkTests(PaymentTestBase):
         payment_services.process_successful_payment(payment, verified=True)
         self.subscription.refresh_from_db()
         self.assertEqual(self.subscription.status, DriverSubscriptionStatus.PENDING)
+
+
+class PaymentAdminTests(PaymentTestBase):
+    """The admin is the only place an operator can settle a cash payment."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client.force_login(self.data.create_superuser())
+
+    def test_payment_changelist_renders(self) -> None:
+        self.create_payment()
+        response = self.client.get("/admin/payments/payment/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_provider_panel_is_rendered_not_just_computed(self) -> None:
+        """`changelist_view` used to pass provider_status into the context with
+        no template to draw it, so a misconfigured gateway stayed invisible."""
+        response = self.client.get("/admin/payments/payment/")
+        self.assertIn("provider_status", response.context_data)
+        self.assertContains(response, "provayderlari")
+
+    def test_credential_free_providers_are_not_reported_as_broken(self) -> None:
+        """Cash and `other` need no credentials; flagging them teaches the
+        operator to ignore the panel."""
+        response = self.client.get("/admin/payments/payment/")
+        status = {item["code"]: item["configured"] for item in response.context_data["provider_status"]}
+        self.assertTrue(status[PaymentProvider.CASH])
+        self.assertTrue(status[PaymentProvider.OTHER])
+
+    def test_existing_payments_render_read_only_and_reject_writes(self) -> None:
+        """`has_change_permission = False` makes Django fall back to view-only
+        rather than 403, so assert the invariant that matters: the row cannot be
+        altered through this URL."""
+        payment = self.create_payment(external_transaction_id="immutable-1")
+        original_amount = payment.amount
+
+        response = self.client.get(f"/admin/payments/payment/{payment.pk}/change/")
+        self.assertEqual(response.status_code, 200)
+
+        self.client.post(
+            f"/admin/payments/payment/{payment.pk}/change/",
+            {
+                "user": self.driver.user.pk,
+                "payment_type": PaymentType.SUBSCRIPTION,
+                "amount": "1.00",
+                "provider": PaymentProvider.CLICK,
+                "external_transaction_id": "hijacked",
+                "metadata": "{}",
+            },
+        )
+        payment.refresh_from_db()
+        self.assertEqual(payment.amount, original_amount)
+        self.assertEqual(payment.external_transaction_id, "immutable-1")
+
+    def test_superuser_can_open_the_add_form(self) -> None:
+        response = self.client.get("/admin/payments/payment/add/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_staff_without_superuser_cannot_add(self) -> None:
+        """The add form is superuser-only: an accidental success row would skip
+        payment verification entirely."""
+        staff = self.data.create_passenger(is_staff=True, is_superuser=False)
+        self.client.force_login(staff)
+        self.assertEqual(self.client.get("/admin/payments/payment/add/").status_code, 403)
+
+    def test_hand_entered_payment_is_forced_to_pending(self) -> None:
+        """A crafted POST must not be able to set status=success, which would
+        bypass process_successful_payment and skip the subscription activation
+        and user notification it performs."""
+        before = Payment.objects.count()
+        response = self.client.post(
+            "/admin/payments/payment/add/",
+            {
+                "user": self.driver.user.pk,
+                "payment_type": PaymentType.SUBSCRIPTION,
+                "amount": "25000.00",
+                "provider": PaymentProvider.CASH,
+                "external_transaction_id": "hand-entered-1",
+                "metadata": "{}",
+                "status": PaymentStatus.SUCCESS,
+                "paid_at_0": "2026-01-01",
+                "paid_at_1": "10:00:00",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Payment.objects.count(), before + 1)
+        payment = Payment.objects.get(external_transaction_id="hand-entered-1")
+        self.assertEqual(payment.status, PaymentStatus.PENDING)
+        self.assertIsNone(payment.paid_at)
+
+    def test_negative_amount_is_rejected(self) -> None:
+        before = Payment.objects.count()
+        response = self.client.post(
+            "/admin/payments/payment/add/",
+            {
+                "user": self.driver.user.pk,
+                "payment_type": PaymentType.SUBSCRIPTION,
+                "amount": "-500.00",
+                "provider": PaymentProvider.CASH,
+                "external_transaction_id": "negative-1",
+                "metadata": "{}",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Payment.objects.count(), before)
+
+    def test_confirm_action_settles_a_hand_entered_payment(self) -> None:
+        """The add form creates PENDING rows; the action is what finalises them,
+        so the normal side effects still run."""
+        payment = self.create_payment(
+            provider=PaymentProvider.CASH,
+            external_transaction_id="to-confirm-1",
+            metadata={"subscription_id": self.subscription.pk},
+        )
+        self.client.post(
+            "/admin/payments/payment/",
+            {
+                "action": "confirm_cash_payments",
+                "_selected_action": [str(payment.pk)],
+            },
+            follow=True,
+        )
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatus.SUCCESS)
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.status, DriverSubscriptionStatus.ACTIVE)
+
+    def test_confirm_action_refuses_a_gateway_payment(self) -> None:
+        """Only providers with no server callback may be settled by hand."""
+        payment = self.create_payment(provider=PaymentProvider.CLICK, external_transaction_id="click-1")
+        self.client.post(
+            "/admin/payments/payment/",
+            {"action": "confirm_cash_payments", "_selected_action": [str(payment.pk)]},
+            follow=True,
+        )
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, PaymentStatus.PENDING)

@@ -25,3 +25,6 @@ MATCHABLE_REQUEST_STATUSES: frozenset[str] = frozenset({"active"})
 
 #: Free seats threshold that turns a trip into ``FULL`` automatically.
 ZERO_SEATS = Decimal("0")
+
+#: Minimum allowed distance (km) between origin and destination.
+MIN_ROUTE_DISTANCE_KM = Decimal("5.00")

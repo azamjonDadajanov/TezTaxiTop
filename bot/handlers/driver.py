@@ -15,7 +15,12 @@ from django.utils import timezone
 from apps.core.exceptions import BusinessError
 from bot.keyboards import cancel_keyboard, location_keyboard, main_menu_keyboard
 from bot.services import platform
-from bot.services.locations import get_nearest_location_from_coordinates
+from bot.services.locations import (
+    describe_point,
+    normalize_location,
+    route_distance_km,
+    route_error,
+)
 from bot.states import DriverRegistrationStates, DriverTripStates
 
 router = Router(name="driver")
@@ -157,22 +162,26 @@ async def trip_vehicle(message: Message, state: FSMContext) -> None:
 @router.message(DriverTripStates.waiting_for_origin, F.location)
 async def trip_origin(message: Message, state: FSMContext) -> None:
     try:
-        location = await get_nearest_location_from_coordinates(
+        point = await normalize_location(
             message.location.latitude,
             message.location.longitude,
         )
     except BusinessError as error:
         await message.answer(html.escape(error.message))
         return
-    await state.update_data(origin_location_id=location.pk, origin_name=location.name)
+    await state.update_data(origin=point, origin_label=describe_point(point))
     await state.set_state(DriverTripStates.waiting_for_destination)
-    await message.answer(f"Jo'nash: {html.escape(location.name)}\nEndi borish manzilini yuboring:", reply_markup=location_keyboard())
+    await message.answer(
+        f"Jo'nash nuqtasi: {html.escape(describe_point(point))}\n"
+        "Endi borish nuqtasini yuboring:",
+        reply_markup=location_keyboard(),
+    )
 
 
 @router.message(DriverTripStates.waiting_for_destination, F.location)
 async def trip_destination(message: Message, state: FSMContext) -> None:
     try:
-        location = await get_nearest_location_from_coordinates(
+        point = await normalize_location(
             message.location.latitude,
             message.location.longitude,
         )
@@ -180,12 +189,22 @@ async def trip_destination(message: Message, state: FSMContext) -> None:
         await message.answer(html.escape(error.message))
         return
     data = await state.get_data()
-    if location.pk == data["origin_location_id"]:
-        await message.answer("Borish manzili jo'nash manzilidan farq qilishi kerak.")
+    origin = data.get("origin")
+    if origin is None:
+        await message.answer("Avval jo'nash nuqtasini yuboring.")
         return
-    await state.update_data(destination_location_id=location.pk, destination_name=location.name)
+    error = route_error(origin, point)
+    if error:
+        await message.answer(error)
+        return
+    await state.update_data(destination=point, destination_label=describe_point(point))
     await state.set_state(DriverTripStates.waiting_for_departure_datetime)
-    await message.answer("Jo'nash sanasi va vaqtini kiriting (DD.MM.YYYY HH:MM):", reply_markup=cancel_keyboard())
+    await message.answer(
+        f"Borish nuqtasi: {html.escape(describe_point(point))}\n"
+        f"Masofa: ~{route_distance_km(origin, point):.1f} km\n"
+        "Chuqish sanasi va vaqtini kiriting (DD.MM.YYYY HH:MM):",
+        reply_markup=cancel_keyboard(),
+    )
 
 
 @router.message(DriverTripStates.waiting_for_departure_datetime, F.text)
@@ -238,8 +257,8 @@ async def trip_comment(message: Message, state: FSMContext) -> None:
         trip = await platform.create_trip(
             message.from_user.id,
             data["vehicle_id"],
-            data["origin_location_id"],
-            data["destination_location_id"],
+            data["origin"],
+            data["destination"],
             departure_time=data["departure_time"],
             total_seats=data["total_seats"],
             price_per_seat=data["price_per_seat"],

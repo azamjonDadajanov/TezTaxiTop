@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+from math import asin, cos, radians, sin, sqrt
 from typing import Iterable
 
 from django.db import DatabaseError, transaction
@@ -47,6 +48,7 @@ from apps.rides.constants import (
     BOOKABLE_TRIP_STATUSES,
     MATCHABLE_REQUEST_STATUSES,
     MAX_SEATS_PER_TRIP,
+    MIN_ROUTE_DISTANCE_KM,
     MONEY_DECIMAL_PLACES,
     MONEY_MAX_DIGITS,
 )
@@ -68,6 +70,14 @@ from apps.vehicles.models import Vehicle
 logger = logging.getLogger(__name__)
 
 NON_NEGATIVE = Decimal("0.00")
+
+#: Mean Earth radius in kilometres (same value ``Location.distance_km_to`` uses).
+EARTH_RADIUS_KM = 6371.0
+
+
+def _format_km(value: Decimal) -> str:
+    """Render a kilometre value for a user-facing message: ``5``, ``12.34``."""
+    return f"{value.normalize():f}"
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +178,75 @@ def _resolve_endpoint_updates(changes: dict) -> dict[str, object]:
     return snapshot_columns
 
 
+def haversine_km(
+    first: tuple[Decimal | float, Decimal | float],
+    second: tuple[Decimal | float, Decimal | float],
+) -> Decimal:
+    """Great-circle distance in kilometres between two ``(lat, lng)`` points.
+
+    Shared with :meth:`apps.locations.models.Location.distance_km_to` so a map
+    pick and a catalogue place are measured with exactly the same formula.
+    """
+    latitude_1, longitude_1 = radians(float(first[0])), radians(float(first[1]))
+    latitude_2, longitude_2 = radians(float(second[0])), radians(float(second[1]))
+    delta_latitude = latitude_2 - latitude_1
+    delta_longitude = longitude_2 - longitude_1
+    haversine = (
+        sin(delta_latitude / 2) ** 2
+        + cos(latitude_1) * cos(latitude_2) * sin(delta_longitude / 2) ** 2
+    )
+    # Rounding can push the value a hair above 1.0 for antipodal points.
+    kilometres = 2 * EARTH_RADIUS_KM * asin(sqrt(min(1.0, max(0.0, haversine))))
+    return _to_decimal(round(kilometres, 4))
+
+
+def route_too_close_error(
+    from_point: tuple[Decimal | float, Decimal | float] | None,
+    to_point: tuple[Decimal | float, Decimal | float] | None,
+) -> str | None:
+    """The user-facing reason this route may not be announced, or ``None``.
+
+    Public because the Telegram handlers ask the same question at pin time, so a
+    driver is told the distance is too short before typing the departure, seats
+    and price. Keeping it next to :func:`_assert_min_route_distance` is what
+    guarantees the bot and the API quote one bound.
+    """
+    if from_point is None or to_point is None:
+        return "Qayerdan va qayerga koordinatalar to'liq berilishi kerak."
+    distance = haversine_km(from_point, to_point)
+    if distance >= MIN_ROUTE_DISTANCE_KM:
+        return None
+    return (
+        f"Qayerdan va qayerga kamida {_format_km(MIN_ROUTE_DISTANCE_KM)} km masofa bo'lishi kerak "
+        f"(hozirgi masofa ~{_format_km(distance)} km)."
+    )
+
+
+def validate_route_points(
+    from_point: tuple[Decimal | float, Decimal | float] | None,
+    to_point: tuple[Decimal | float, Decimal | float] | None,
+) -> str | None:
+    """Distance-only view of :func:`_assert_distinct_endpoints`, for the bot."""
+    return route_too_close_error(from_point, to_point)
+
+
+def _assert_min_route_distance(
+    *,
+    from_point: tuple[Decimal, Decimal] | None,
+    to_point: tuple[Decimal, Decimal] | None,
+) -> None:
+    """Reject a route shorter than :data:`MIN_ROUTE_DISTANCE_KM`.
+
+    Two nearby pins are not a ride: the passenger would board and alight on the
+    same street. The check lives in the service layer (not only in the
+    serializers) so the bot, the Mini App and a direct service call all enforce
+    the same lower bound.
+    """
+    error = route_too_close_error(from_point, to_point)
+    if error:
+        raise BusinessValidationError(error)
+
+
 def _assert_distinct_endpoints(
     *,
     from_location_id,
@@ -175,17 +254,21 @@ def _assert_distinct_endpoints(
     from_point: tuple[Decimal, Decimal] | None,
     to_point: tuple[Decimal, Decimal] | None,
 ) -> None:
-    """Reject a route whose two endpoints are the same place.
+    """Reject a route whose two endpoints are the same place or too close.
 
     Identity is the catalogue FK when both sides carry one, and the coordinates
     otherwise. Comparing only the FKs - the pre-map behaviour - would let a
     map-picked "Toshkent -> Toshkent" trip through, because such a trip has no
     FKs at all.
+
+    Distinct is not enough on its own: two different pins 100 m apart describe no
+    ride at all, so the minimum distance is enforced here too.
     """
     same_catalogue_place = from_location_id is not None and from_location_id == to_location_id
     same_point = from_point is not None and from_point == to_point
     if same_catalogue_place or same_point:
         raise BusinessValidationError("Qayerdan va qayerga bir xil bo'lishi mumkin emas.")
+    _assert_min_route_distance(from_point=from_point, to_point=to_point)
 
 
 # ---------------------------------------------------------------------------
@@ -848,11 +931,14 @@ __all__ = [
     "expire_trips",
     "get_required_passenger_request",
     "get_required_trip",
+    "haversine_km",
     "lock_trip_for_update",
     "publish_trip",
     "release_seats",
     "reserve_seats",
+    "route_too_close_error",
     "start_trip",
     "update_passenger_request",
     "update_trip",
+    "validate_route_points",
 ]

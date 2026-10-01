@@ -137,6 +137,29 @@ class DriverSubscriptionAdmin(admin.ModelAdmin):
         """Subscription history is never deleted."""
         return False
 
+    def get_readonly_fields(self, request, obj=None):
+        """``price_at_purchase`` must be fillable on the add form.
+
+        It is a NOT NULL column with no default, so leaving it readonly meant
+        the add form never submitted it and every manual subscription raised
+        ``IntegrityError: NOT NULL constraint failed``.
+        """
+        if obj is None:
+            return tuple(
+                field for field in self.readonly_fields if field != "price_at_purchase"
+            )
+        return self.readonly_fields
+
+    def save_model(self, request, obj, form, change) -> None:
+        """Default the price from the plan rather than trusting the operator.
+
+        Keeps the column non-null even if a crafted POST omits it, and stops
+        the entered price from drifting away from the plan it belongs to.
+        """
+        if not change and obj.price_at_purchase is None:
+            obj.snapshot_plan()
+        super().save_model(request, obj, form, change)
+
     @admin.display(description=_("Haydovchi"), ordering=("driver__user__first_name",))
     def driver_name(self, obj: DriverSubscription) -> str:
         return obj.driver.user.display_name

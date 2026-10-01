@@ -60,6 +60,16 @@ class TaxiTestData:
             **kwargs,
         )
 
+    def create_superuser(self, **kwargs) -> object:
+        """Staff + superuser, for tests that exercise the Django admin."""
+        index = self._next()
+        return User.objects.create_superuser(
+            username=kwargs.pop("username", f"admin{index}"),
+            email=kwargs.pop("email", f"admin{index}@example.com"),
+            password=kwargs.pop("password", "admin-pass-123"),
+            **kwargs,
+        )
+
     def create_driver(
         self,
         *,

@@ -12,20 +12,20 @@ from django.utils import timezone
 
 from apps.core.exceptions import ResourceNotFound
 from apps.rides.constants import MATCHABLE_REQUEST_STATUSES
+from bot.services.platform import _resolve_endpoint
 
 
 def _create_passenger_request(
     *,
     user_id: int,
-    origin_location_id: int,
-    destination_location_id: int,
+    origin,
+    destination,
     departure_date: date,
     departure_time: time,
     passenger_count: int,
     max_price_per_seat: Decimal | int | None = None,
     comment: str = "",
 ):
-    from apps.locations.selectors import get_location_by_id
     from apps.rides.services import create_passenger_request as create_request
     from apps.users.selectors import get_user_by_telegram_id
 
@@ -33,20 +33,23 @@ def _create_passenger_request(
     if passenger is None:
         raise ResourceNotFound("Foydalanuvchi topilmadi.")
 
-    origin = get_location_by_id(origin_location_id)
-    destination = get_location_by_id(destination_location_id)
-    if origin is None or destination is None:
-        raise ResourceNotFound("Tanlangan manzil topilmadi.")
+    endpoint_kwargs = _resolve_endpoint(
+        origin, label="Jo'nash", point_key="origin", location_field="from_location"
+    )
+    endpoint_kwargs.update(
+        _resolve_endpoint(
+            destination, label="Borish", point_key="destination", location_field="to_location"
+        )
+    )
 
     departure_from = timezone.make_aware(datetime.combine(departure_date, departure_time))
     return create_request(
         passenger=passenger,
-        from_location=origin,
-        to_location=destination,
         passenger_count=passenger_count,
         max_price_per_seat=max_price_per_seat,
         departure_from=departure_from,
         comment=comment,
+        **endpoint_kwargs,
     )
 
 

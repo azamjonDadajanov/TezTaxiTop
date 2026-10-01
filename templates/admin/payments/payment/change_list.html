@@ -1,0 +1,32 @@
+{% extends "admin/change_list.html" %}
+
+{# Gateway configuration state, injected by PaymentAdmin.changelist_view.
+   A misconfigured gateway looks identical to a broken one from the payment
+   rows alone, so surface it on the list screen where the operator acts. #}
+{% block object-tools-items %}
+  {% if provider_status %}
+    <div class="module" id="provider-status">
+      <h2>To'lov provayderlari</h2>
+      <table>
+        <thead>
+          <tr><th>Provayder</th><th>Sozlash</th></tr>
+        </thead>
+        <tbody>
+          {% for item in provider_status %}
+            <tr>
+              <td>{{ item.code }}</td>
+              <td>
+                {% if item.configured %}
+                  <span style="color:#2e7d32;font-weight:600;">Sozlangan</span>
+                {% else %}
+                  <span style="color:#c62828;font-weight:600;">Sozlanmagan</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

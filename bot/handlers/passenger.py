@@ -15,6 +15,7 @@ from apps.core.exceptions import BusinessError
 
 from bot.keyboards import cancel_keyboard
 from bot.services import platform
+from bot.services.locations import describe_point, normalize_location, route_distance_km, route_error
 from bot.states import PassengerRequestStates
 from bot.services.passenger import (
     create_passenger_request,
@@ -54,24 +55,17 @@ async def start_passenger_request(message: Message, state: FSMContext) -> None:
 @router.message(PassengerRequestStates.waiting_for_origin, F.location)
 async def handle_origin_location(message: Message, state: FSMContext) -> None:
     """Handle origin location selection."""
-    from bot.services.locations import get_nearest_location_from_coordinates
-
     try:
-        location = await get_nearest_location_from_coordinates(
-            message.location.latitude, message.location.longitude
-        )
+        point = await normalize_location(message.location.latitude, message.location.longitude)
     except BusinessError as error:
         await message.answer(html.escape(error.message))
         return
-    await state.update_data(
-        origin_location_id=location.pk,
-        origin_location_name=location.name,
-    )
+    await state.update_data(origin=point, origin_label=describe_point(point))
     await state.set_state(PassengerRequestStates.waiting_for_destination)
 
     await message.answer(
-        f"✅ Manba: <b>{html.escape(location.name)}</b>\n\n"
-        "📍 Endi <b>qo'nish manzilini</b> tanlang:",
+        f"✅ Manba: <b>{html.escape(describe_point(point))}</b>\n\n"
+        "📍 Endi <b>qo'nish nuqtasini</b> tanlang:",
         parse_mode="HTML",
         reply_markup=cancel_keyboard(),
     )
@@ -80,27 +74,26 @@ async def handle_origin_location(message: Message, state: FSMContext) -> None:
 @router.message(PassengerRequestStates.waiting_for_destination, F.location)
 async def handle_destination_location(message: Message, state: FSMContext) -> None:
     """Handle destination location selection."""
-    from bot.services.locations import get_nearest_location_from_coordinates
-
     try:
-        location = await get_nearest_location_from_coordinates(
-            message.location.latitude, message.location.longitude
-        )
+        point = await normalize_location(message.location.latitude, message.location.longitude)
     except BusinessError as error:
         await message.answer(html.escape(error.message))
         return
     data = await state.get_data()
-    if location.pk == data.get("origin_location_id"):
-        await message.answer("Borish manzili jo'nash manzilidan farq qilishi kerak.")
+    origin = data.get("origin")
+    if origin is None:
+        await message.answer("Avval qo'shilish nuqtasini yuboring.")
         return
-    await state.update_data(
-        destination_location_id=location.pk,
-        destination_location_name=location.name,
-    )
+    error_message = route_error(origin, point)
+    if error_message:
+        await message.answer(error_message)
+        return
+    await state.update_data(destination=point, destination_label=describe_point(point))
     await state.set_state(PassengerRequestStates.waiting_for_passenger_count)
 
     await message.answer(
-        f"✅ Maqsad: <b>{html.escape(location.name)}</b>\n\n"
+        f"✅ Maqsad: <b>{html.escape(describe_point(point))}</b>\n"
+        f"📏 Masofa: <b>~{route_distance_km(origin, point):.1f} km</b>\n\n"
         "👥 <b>Yo'lovchilar sonini kiriting (1-9):</b>",
         parse_mode="HTML",
         reply_markup=cancel_keyboard(),
@@ -212,8 +205,8 @@ async def handle_comment(message: Message, state: FSMContext) -> None:
 
     summary = (
         "📋 <b>So'rovingiz tasdiqlash uchun:</b>\n\n"
-        f"📍 Qayerdan: <b>{html.escape(data.get('origin_location_name', 'Noma\'lum'))}</b>\n"
-        f"📍 Qayerga: <b>{html.escape(data.get('destination_location_name', 'Noma\'lum'))}</b>\n"
+        f"📍 Qayerdan: <b>{html.escape(data.get('origin_label', 'Noma\'lum'))}</b>\n"
+        f"📍 Qayerga: <b>{html.escape(data.get('destination_label', 'Noma\'lum'))}</b>\n"
         f"👥 Yo'lovchilar: <b>{data.get('passenger_count', 1)}</b>\n"
         f"📅 Sana: <b>{data.get('departure_date', 'Noma\'lum')}</b>\n"
         f"🕐 Vaqt: <b>{data.get('departure_time', 'Noma\'lum')}</b>\n"
@@ -249,8 +242,8 @@ async def confirm_request(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         request = await create_passenger_request(
             user_id=callback.from_user.id,
-            origin_location_id=data["origin_location_id"],
-            destination_location_id=data["destination_location_id"],
+            origin=data["origin"],
+            destination=data["destination"],
             departure_date=data["departure_date"],
             departure_time=data["departure_time"],
             passenger_count=data["passenger_count"],

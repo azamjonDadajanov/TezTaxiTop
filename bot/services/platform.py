@@ -73,8 +73,24 @@ async def create_vehicle(telegram_id: int, **vehicle_data):
     return await sync_to_async(_create_vehicle)(telegram_id, **vehicle_data)
 
 
-def _create_trip(telegram_id: int, vehicle_id: int, origin_id: int, destination_id: int, **trip_data):
+def _resolve_endpoint(value, *, label: str, point_key: str, location_field: str) -> dict:
+    """Accept either a route point payload or a catalogue ``Location`` id.
+
+    The bot sends raw coordinates, but a caller holding a catalogue id keeps
+    working: the two shapes map onto the two ways a route endpoint can be
+    described in :func:`apps.rides.services.create_trip`.
+    """
     from apps.locations.selectors import get_location_by_id
+
+    if isinstance(value, dict):
+        return {point_key: dict(value)}
+    location = get_location_by_id(value)
+    if location is None:
+        raise ResourceNotFound(f"{label} manzili topilmadi.")
+    return {location_field: location}
+
+
+def _create_trip(telegram_id: int, vehicle_id: int, origin, destination, **trip_data):
     from apps.rides.services import assert_driver_can_create_trip, create_trip
     from apps.users.selectors import get_user_by_telegram_id
     from apps.vehicles.selectors import get_vehicle_by_id
@@ -84,22 +100,28 @@ def _create_trip(telegram_id: int, vehicle_id: int, origin_id: int, destination_
         raise ResourceNotFound("Foydalanuvchi topilmadi.")
     driver = assert_driver_can_create_trip(user)
     vehicle = get_vehicle_by_id(vehicle_id)
-    origin = get_location_by_id(origin_id)
-    destination = get_location_by_id(destination_id)
-    if vehicle is None or origin is None or destination is None:
-        raise ResourceNotFound("Avtomobil yoki manzil topilmadi.")
+    if vehicle is None:
+        raise ResourceNotFound("Avtomobil topilmadi.")
+
+    endpoint_kwargs = _resolve_endpoint(
+        origin, label="Jo'nash", point_key="origin", location_field="from_location"
+    )
+    endpoint_kwargs.update(
+        _resolve_endpoint(
+            destination, label="Borish", point_key="destination", location_field="to_location"
+        )
+    )
     return create_trip(
         driver_profile=driver,
         vehicle=vehicle,
-        from_location=origin,
-        to_location=destination,
+        **endpoint_kwargs,
         **trip_data,
     )
 
 
-async def create_trip(telegram_id: int, vehicle_id: int, origin_id: int, destination_id: int, **trip_data):
+async def create_trip(telegram_id: int, vehicle_id: int, origin, destination, **trip_data):
     return await sync_to_async(_create_trip)(
-        telegram_id, vehicle_id, origin_id, destination_id, **trip_data
+        telegram_id, vehicle_id, origin, destination, **trip_data
     )
 
 

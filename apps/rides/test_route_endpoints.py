@@ -20,11 +20,98 @@ from django.utils import timezone
 from apps.core.exceptions import BusinessValidationError
 from apps.core.testing import TaxiTestData
 from apps.rides import services as ride_services
+from apps.rides.constants import MIN_ROUTE_DISTANCE_KM
 
 from apps.locations.test_two_gis import TASHKENT_ITEM, _FakeResponse, _payload
 
 TASHKENT = {"latitude": "41.311081", "longitude": "69.240562"}
 SAMARKAND = {"latitude": "39.650000", "longitude": "66.960000"}
+#: ~0.44 km north of TASHKENT - a different pin, but not a ride.
+NEARBY = {"latitude": "41.315000", "longitude": "69.240562"}
+#: ~6.0 km north of TASHKENT: the shortest route the platform accepts.
+JUST_OVER_MINIMUM = {"latitude": "41.365000", "longitude": "69.240562"}
+
+
+@override_settings(TWOGIS_API_KEY="test-key", TWOGIS_REGION_ID=42)
+class MinimumRouteDistanceTests(TestCase):
+    """A route shorter than :data:`MIN_ROUTE_DISTANCE_KM` is not a ride.
+
+    Two pins 400 m apart are two *different* places, so the identity check alone
+    lets them through - but a passenger would board and alight on the same street.
+    """
+
+    def setUp(self) -> None:
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.data = TaxiTestData()
+        self.driver = self.data.create_driver()
+        self.departure = timezone.now() + timedelta(hours=2)
+
+    def create_trip(self, **kwargs):
+        params = {
+            "driver_profile": self.driver.profile,
+            "vehicle": self.driver.vehicle,
+            "departure_time": self.departure,
+            "total_seats": 3,
+            "price_per_seat": Decimal("20000.00"),
+            "origin": dict(TASHKENT),
+            "destination": dict(SAMARKAND),
+        }
+        params.update(kwargs)
+        return ride_services.create_trip(**params)
+
+    def test_a_route_shorter_than_the_minimum_is_rejected(self) -> None:
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            with self.assertRaises(BusinessValidationError) as raised:
+                self.create_trip(destination=dict(NEARBY))
+
+        self.assertIn(str(MIN_ROUTE_DISTANCE_KM.normalize()), str(raised.exception))
+
+    def test_a_route_at_or_over_the_minimum_is_accepted(self) -> None:
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            trip = self.create_trip(destination=dict(JUST_OVER_MINIMUM))
+
+        self.assertEqual(trip.to_latitude, Decimal("41.365000"))
+
+    def test_moving_an_endpoint_on_top_of_the_other_one_is_rejected(self) -> None:
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            trip = self.create_trip()
+            with self.assertRaises(BusinessValidationError):
+                ride_services.update_trip(trip, destination=dict(NEARBY))
+
+    def test_moving_an_endpoint_out_of_range_is_rejected(self) -> None:
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            trip = self.create_trip()
+            with self.assertRaises(BusinessValidationError):
+                ride_services.update_trip(trip, destination=dict(TASHKENT))
+
+    def test_a_catalogue_route_shorter_than_the_minimum_is_rejected(self) -> None:
+        """The bound is about the route, not about how it was described."""
+        district = self.data.get_or_create_district()
+        origin_place = self.data.get_or_create_location(
+            "Chiqish MFY", district=district, latitude="41.311081", longitude="69.240562"
+        )
+        nearby_place = self.data.get_or_create_location(
+            "Yopiq MFY", district=district, latitude="41.315000", longitude="69.240562"
+        )
+
+        with self.assertRaises(BusinessValidationError):
+            self.create_trip(origin=None, destination=None,
+                             from_location=origin_place, to_location=nearby_place)
+
+    def test_the_passenger_side_enforces_the_same_minimum(self) -> None:
+        passenger = self.data.create_passenger()
+
+        with patch("apps.locations.two_gis.requests.get", return_value=_FakeResponse(_payload(TASHKENT_ITEM))):
+            with self.assertRaises(BusinessValidationError):
+                ride_services.create_passenger_request(
+                    passenger=passenger,
+                    origin=dict(TASHKENT),
+                    destination=dict(NEARBY),
+                    departure_from=timezone.now() + timedelta(hours=1),
+                    departure_until=timezone.now() + timedelta(hours=3),
+                    passenger_count=1,
+                )
 
 
 @override_settings(TWOGIS_API_KEY="test-key", TWOGIS_REGION_ID=42)

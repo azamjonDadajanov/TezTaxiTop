@@ -6,6 +6,7 @@ from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
+from django.contrib import admin
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -279,3 +280,66 @@ class SubscriptionPurchaseApiTests(TestCase):
         )
         # The permission layer rejects a passenger before the view body runs.
         self.assertEqual(response.status_code, 403)
+
+
+class SubscriptionAdminTests(TestCase):
+    """`price_at_purchase` is a NOT NULL column with no default.
+
+    It was listed in ``readonly_fields``, so the add form never submitted it
+    and every hand-created subscription raised ``IntegrityError: NOT NULL
+    constraint failed: subscriptions_driversubscription.price_at_purchase``.
+    """
+
+    def setUp(self) -> None:
+        self.data = TaxiTestData()
+        self.admin = self.data.create_superuser()
+        self.driver = self.data.create_driver(with_subscription=False)
+        self.plan = self.data.get_or_create_plan()
+        self.client.force_login(self.admin)
+
+    def _payload(self, **overrides) -> dict:
+        data = {
+            "driver": self.driver.profile.pk,
+            "plan": self.plan.pk,
+            "starts_at_0": "2026-01-01",
+            "starts_at_1": "10:00:00",
+            "expires_at_0": "2026-02-01",
+            "expires_at_1": "10:00:00",
+            "status": DriverSubscriptionStatus.PENDING,
+            "price_at_purchase": "45000.00",
+        }
+        data.update(overrides)
+        return data
+
+    def test_add_form_is_reachable(self) -> None:
+        self.assertEqual(self.client.get("/admin/subscriptions/driversubscription/add/").status_code, 200)
+
+    def test_add_form_exposes_the_price(self) -> None:
+        response = self.client.get("/admin/subscriptions/driversubscription/add/")
+        self.assertContains(response, 'name="price_at_purchase"')
+
+    def test_creating_a_subscription_no_longer_raises_integrity_error(self) -> None:
+        before = DriverSubscription.objects.count()
+        response = self.client.post("/admin/subscriptions/driversubscription/add/", self._payload())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(DriverSubscription.objects.count(), before + 1)
+
+    def test_price_defaults_from_the_plan_when_omitted(self) -> None:
+        """``save_model`` snapshots the plan price, so the column can never be
+        left null by a crafted POST."""
+        subscription = subscription_services.create_subscription(
+            driver=self.driver.profile, plan=self.plan
+        )
+        subscription.price_at_purchase = None
+        admin_obj = admin.site._registry[DriverSubscription]
+        admin_obj.save_model(None, subscription, None, False)
+        self.assertEqual(subscription.price_at_purchase, self.plan.price)
+
+    def test_existing_subscription_price_is_still_read_only(self) -> None:
+        subscription = subscription_services.create_subscription(
+            driver=self.driver.profile, plan=self.plan
+        )
+        response = self.client.get(
+            f"/admin/subscriptions/driversubscription/{subscription.pk}/change/"
+        )
+        self.assertNotContains(response, 'name="price_at_purchase"')

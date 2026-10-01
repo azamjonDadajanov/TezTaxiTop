@@ -222,18 +222,17 @@ class Location(TimeStampedModel):
 
         Used only for informative display and for the "nearby locations"
         ordering; the matching score itself is deterministic and rule based.
+        Delegates to :func:`apps.rides.services.haversine_km` so a catalogue
+        route and a map pick are measured with one formula.
         """
-        from math import asin, cos, radians, sin, sqrt
+        from apps.rides.services import haversine_km
 
-        latitude_1, longitude_1 = radians(float(self.latitude)), radians(float(self.longitude))
-        latitude_2, longitude_2 = radians(float(other.latitude)), radians(float(other.longitude))
-        delta_latitude = latitude_2 - latitude_1
-        delta_longitude = longitude_2 - longitude_1
-        haversine = (
-            sin(delta_latitude / 2) ** 2
-            + cos(latitude_1) * cos(latitude_2) * sin(delta_longitude / 2) ** 2
+        return float(
+            haversine_km(
+                (self.latitude, self.longitude),
+                (other.latitude, other.longitude),
+            )
         )
-        return 2 * 6371.0 * asin(sqrt(haversine))
 
     @staticmethod
     def same_place(first: "Location", second: "Location") -> bool:
