@@ -135,6 +135,28 @@ function usePassengerPosition() {
   return useViewerPosition(TAXI_POSITION_KEY)
 }
 
+/** Keeps a Leaflet map in sync with a container CSS sizes, not Leaflet itself.
+ *
+ *  The map fills the rest of the window, so every resize - rotating the phone,
+ *  opening the sidebar, the browser bars sliding away - changes the box Leaflet
+ *  cached on creation. Without `invalidateSize` the tiles keep the old size and
+ *  the grey gaps never fill in. */
+function useFullHeightMap(map: React.RefObject<L.Map | null>) {
+  useEffect(() => {
+    const resize = () => map.current?.invalidateSize()
+    // The first paint can settle after the map exists (fonts, the sheet), so
+    // measure once more shortly after mount.
+    const settle = window.setTimeout(resize, 250)
+    window.addEventListener('resize', resize)
+    window.addEventListener('orientationchange', resize)
+    return () => {
+      window.clearTimeout(settle)
+      window.removeEventListener('resize', resize)
+      window.removeEventListener('orientationchange', resize)
+    }
+  }, [map])
+}
+
 export function DriverMapPage() {
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
@@ -146,6 +168,7 @@ export function DriverMapPage() {
   const selectRef = useRef<(id: number) => void>(() => {})
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [focusNonce, setFocusNonce] = useState(0)
+  useFullHeightMap(map)
 
   const { position: driver, source, locate } = useDriverPosition()
   const nearby = useQuery({
@@ -282,7 +305,7 @@ export function DriverMapPage() {
     instance.flyTo(driver, 13, { duration: 0.6 })
   }, [driver])
 
-  return <>
+return <div className="map-page">
     <PageHeading
       eyebrow="HAYDOVCHI XARITASI"
       title="Atrofingizdagi yo‘lovchilar"
@@ -342,7 +365,7 @@ export function DriverMapPage() {
         </div>
       </article>}
     </section>
-  </>
+  </div>
 }
 
 /** A taxi seen from the top, drawn in the marker's colour. */
@@ -405,6 +428,7 @@ export function PassengerMapPage() {
   const selectRef = useRef<(id: number) => void>(() => {})
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [focusNonce, setFocusNonce] = useState(0)
+  useFullHeightMap(map)
 
   const { position: viewer, source, locate } = usePassengerPosition()
   const nearby = useQuery({
@@ -547,7 +571,7 @@ export function PassengerMapPage() {
     instance.flyTo(viewer, 13, { duration: 0.6 })
   }, [viewer])
 
-  return <>
+  return <div className="map-page">
     <PageHeading
       eyebrow="YO‘LOVCHI XARITASI"
       title="Atrofingizdagi taksilar"
@@ -614,5 +638,5 @@ export function PassengerMapPage() {
         </div>
       </article>}
     </section>
-  </>
+  </div>
 }

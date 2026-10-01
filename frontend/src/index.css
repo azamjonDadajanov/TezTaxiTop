@@ -15,6 +15,9 @@
   --line: #e2e9df;
   --lime: #d9f477;
   --lime-deep: #b5d84a;
+  /* Height of the sticky topbar. The full-screen map subtracts it, so the map
+     always ends at the bottom edge of the window - keep it in sync below. */
+  --topbar-h: 68px;
   --teal: #b7e2d6;
   --coral: #f6c5ac;
   --shadow: 0 14px 36px rgba(25, 52, 43, .07);
@@ -57,7 +60,7 @@ h1, h2, h3 { font-family: Manrope, sans-serif; }
 .sidebar-person span { color: #9db1a4; font-size: 11px; }
 .logout-button { color: #a4b7aa !important; }
 .main-column { min-height: 100vh; margin-left: 248px; }
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; height: 68px; align-items: center; justify-content: space-between; padding: 0 38px; border-bottom: 1px solid rgba(226,233,223,.88); background: rgba(248,250,246,.91); backdrop-filter: blur(14px); }
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; height: var(--topbar-h); align-items: center; justify-content: space-between; padding: 0 38px; border-bottom: 1px solid rgba(226,233,223,.88); background: rgba(248,250,246,.91); backdrop-filter: blur(14px); }
 .crumb { display: flex; align-items: center; gap: 12px; color: #87948c; font-size: 11px; font-weight: 700; letter-spacing: 0; }
 .crumb i { color: #b3beb5; font-style: normal; }
 .crumb strong { color: #344b41; font-size: 12px; }
@@ -66,7 +69,7 @@ h1, h2, h3 { font-family: Manrope, sans-serif; }
 .topbar-alert span { position: absolute; top: 6px; right: 5px; width: 7px; height: 7px; border: 1.5px solid #f8faf6; border-radius: 50%; background: #ed8f68; }
 .avatar-top { width: 34px; height: 34px; font-size: 13px; }
 .compact-mode button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: white; font-size: 11px; font-weight: 700; cursor: pointer; }
-.page-content { width: min(100%, 1310px); margin: 0 auto; padding: 37px 40px 68px; }
+.page-content { display: flex; width: min(100%, 1310px); min-height: calc(100dvh - var(--topbar-h)); flex-direction: column; box-sizing: border-box; margin: 0 auto; padding: 37px 40px 68px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 27px; animation: rise-in .35s ease both; }
 .eyebrow { display: block; margin-bottom: 7px; color: #809187; font-size: 10px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
 .page-heading h1 { margin: 0; color: var(--ink); font-size: 28px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
@@ -332,6 +335,12 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
 .driver-map-notice { margin-bottom: 13px; }
 .driver-map-wrap { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #e9eee6; box-shadow: 0 16px 40px rgba(19,49,38,.08); }
 .driver-map { z-index: 0; height: clamp(430px, 68vh, 780px); background: #e9eee6; }
+/* Both maps own the whole screen: the heading and the notice above keep their
+   natural height, the map takes everything left and reaches the window edge, so
+   the page itself never scrolls. `dvh` follows the mobile browser bars. */
+.map-page { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
+.map-page .driver-map-wrap { min-height: 420px; flex: 1 1 auto; }
+.map-page .driver-map { width: 100%; height: 100%; }
 .driver-map .leaflet-control-attribution { font-size: 8px; }
 .driver-map .leaflet-control-zoom { border: 0; border-radius: 5px; box-shadow: 0 6px 16px rgba(19,49,38,.16); overflow: hidden; }
 .driver-map .leaflet-control-zoom a { color: var(--ink); border-bottom-color: #e4ebe0; font-size: 15px; }
@@ -396,6 +405,8 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
   .main-column { margin-left: 226px; }
   .dashboard-lower { gap: 20px; }
   .driver-map { height: clamp(380px, 64vh, 620px); }
+  .map-page .driver-map { height: 100%; }
+  .map-page .driver-map-wrap { min-height: 380px; }
 }
 @media (max-width: 800px) {
   .sidebar { z-index: 60; width: min(82vw, 290px); transform: translateX(-102%); transition: transform .22s ease; box-shadow: 15px 0 50px rgba(19,49,38,.15); }
@@ -403,11 +414,13 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
   .sidebar-close, .menu-trigger { display: grid; }
   .mobile-scrim { position: fixed; z-index: 50; inset: 0; border: 0; background: rgba(18,43,34,.36); }
   .main-column { margin-left: 0; }
-  .topbar { height: 58px; padding: 0 18px; }
+  :root { --topbar-h: 58px; }
+  .topbar { height: var(--topbar-h); padding: 0 18px; }
   .crumb { margin-right: auto; margin-left: 8px; }
   .crumb > span { display: none; }
   .topbar-actions { gap: 8px; }
   .page-content { padding: 26px 18px 88px; }
+  .map-page .driver-map-wrap { min-height: 340px; }
   .mobile-nav { position: fixed; z-index: 40; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); padding: 7px 8px max(7px, env(safe-area-inset-bottom)); border-top: 1px solid #e0e8dd; background: rgba(255,255,255,.97); backdrop-filter: blur(12px); }
   .mobile-nav-link { display: flex; min-width: 0; min-height: 47px; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 5px; color: #7b8980; font-size: 8px; font-weight: 700; }
   .mobile-more { width: 100%; border: 0; background: transparent; cursor: pointer; }
