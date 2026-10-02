@@ -4,26 +4,34 @@ from __future__ import annotations
 
 import html
 import logging
-import re
-from datetime import datetime, time
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from apps.core.exceptions import BusinessError
+from apps.orders.constants import MAX_SEATS_PER_ORDER
+from django.utils import timezone
 
-from bot.keyboards import cancel_keyboard
+from bot.keyboards import (
+    cancel_keyboard,
+    location_keyboard,
+    main_menu_keyboard,
+    make_date_keyboard,
+    make_time_keyboard,
+)
 from bot.services import platform
 from bot.services.locations import describe_point, normalize_location, route_distance_km, route_error
-from bot.states import PassengerRequestStates
 from bot.services.passenger import (
     create_passenger_request,
-    get_matching_trips,
     format_matches_for_user,
-    get_my_requests,
+    format_trip_for_user,
+    get_matching_trips,
     get_my_orders,
+    get_my_requests,
 )
+from bot.states import PassengerRequestStates
 
 router = Router(name="passenger")
 logger = logging.getLogger(__name__)
@@ -40,15 +48,24 @@ async def _send_matches(message: Message, request_id: int, matches: list) -> Non
         )
 
 
+async def _send_main_menu(message: Message, user_id: int) -> None:
+    try:
+        user = await platform.get_user(user_id)
+        is_driver = user.is_driver_role
+    except BusinessError:
+        is_driver = False
+    await message.answer("Asosiy menyu:", reply_markup=main_menu_keyboard(is_driver))
+
+
 @router.message(F.text == "📝 So'rov yaratish")
 async def start_passenger_request(message: Message, state: FSMContext) -> None:
     """Start creating a passenger request."""
     await state.set_state(PassengerRequestStates.waiting_for_origin)
     await message.answer(
-        "📍 <b>Qo'shilish manzilini tanlang:</b>\n\n"
-        "Manzilni yuboring yoki ro'yxatdan tanlang.",
+        "📍 <b>Qo'shilish manzilini yuboring:</b>\n\n"
+        "Pastdagi tugma orqali lokatsiyangizni yuboring.",
         parse_mode="HTML",
-        reply_markup=cancel_keyboard(),
+        reply_markup=location_keyboard(),
     )
 
 
@@ -65,9 +82,9 @@ async def handle_origin_location(message: Message, state: FSMContext) -> None:
 
     await message.answer(
         f"✅ Manba: <b>{html.escape(describe_point(point))}</b>\n\n"
-        "📍 Endi <b>qo'nish nuqtasini</b> tanlang:",
+        "📍 Endi <b>qo'nish nuqtasini</b> yuboring:",
         parse_mode="HTML",
-        reply_markup=cancel_keyboard(),
+        reply_markup=location_keyboard(),
     )
 
 
@@ -89,15 +106,70 @@ async def handle_destination_location(message: Message, state: FSMContext) -> No
         await message.answer(error_message)
         return
     await state.update_data(destination=point, destination_label=describe_point(point))
-    await state.set_state(PassengerRequestStates.waiting_for_passenger_count)
+    await state.set_state(PassengerRequestStates.waiting_for_departure_date)
 
     await message.answer(
         f"✅ Maqsad: <b>{html.escape(describe_point(point))}</b>\n"
         f"📏 Masofa: <b>~{route_distance_km(origin, point):.1f} km</b>\n\n"
-        "👥 <b>Yo'lovchilar sonini kiriting (1-9):</b>",
+        "📅 <b>Chuqish sanasini tanlang:</b>",
         parse_mode="HTML",
-        reply_markup=cancel_keyboard(),
+        reply_markup=await make_date_keyboard(),
     )
+
+
+@router.callback_query(
+    StateFilter(
+        PassengerRequestStates.waiting_for_departure_date,
+        PassengerRequestStates.waiting_for_departure_time,
+    ),
+    F.data.startswith("datetime:"),
+)
+async def request_departure_datetime_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Drive the inline date → time picker for a passenger request."""
+    parts = callback.data.split(":", maxsplit=3)
+    if parts[1] == "date":
+        date_str = parts[2]
+        await state.update_data(departure_date_str=date_str)
+        await state.set_state(PassengerRequestStates.waiting_for_departure_time)
+        if callback.message:
+            await callback.message.edit_text(
+                f"📅 Sana: {date_str}\nVaqtni tanlang:",
+                reply_markup=await make_time_keyboard(date_str),
+            )
+        await callback.answer()
+        return
+    if parts[1] == "back":
+        await state.set_state(PassengerRequestStates.waiting_for_departure_date)
+        if callback.message:
+            await callback.message.edit_text(
+                "Chuqish sanasini tanlang:",
+                reply_markup=await make_date_keyboard(),
+            )
+        await callback.answer()
+        return
+    try:
+        date_str = parts[2]
+        time_str = parts[3]
+        naive = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")  # noqa: DTZ007
+        departure = timezone.make_aware(naive)
+        if departure <= timezone.now():
+            raise ValueError
+    except (IndexError, ValueError):
+        await callback.answer("Bu vaqt o'tib ketgan, boshqa sana tanlang.", show_alert=True)
+        return
+    await state.update_data(departure_date=naive.date(), departure_time=naive.time())
+    await state.set_state(PassengerRequestStates.waiting_for_passenger_count)
+    if callback.message:
+        await callback.message.edit_text(f"🕐 Chuqish vaqti: {date_str} {time_str}")
+        await callback.message.answer(
+            "👥 <b>Yo'lovchilar sonini kiriting (1-9):</b>",
+            parse_mode="HTML",
+            reply_markup=cancel_keyboard(),
+        )
+    await callback.answer("Sana va vaqt tanlandi")
 
 
 @router.message(PassengerRequestStates.waiting_for_passenger_count, F.text.isdigit())
@@ -109,11 +181,11 @@ async def handle_passenger_count(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(passenger_count=count)
-    await state.set_state(PassengerRequestStates.waiting_for_departure_date)
+    await state.set_state(PassengerRequestStates.waiting_for_max_price)
 
     await message.answer(
-        "📅 <b>Chuqish kunini kiriting (DD.MM.YYYY):</b>\n\n"
-        "Masalan: 28.09.2026",
+        "💰 <b>Maksimal narxni kiriting (so'm, ixtiyoriy):</b>\n\n"
+        "Agar cheklov yo'q bo'lsa, '0' yuboring.",
         parse_mode="HTML",
         reply_markup=cancel_keyboard(),
     )
@@ -123,54 +195,6 @@ async def handle_passenger_count(message: Message, state: FSMContext) -> None:
 async def handle_invalid_passenger_count(message: Message) -> None:
     """Explain the accepted format when passenger count is not numeric."""
     await message.answer("Yo'lovchilar sonini 1 dan 9 gacha butun son bilan kiriting.")
-
-
-@router.message(PassengerRequestStates.waiting_for_departure_date, F.text)
-async def handle_departure_date(message: Message, state: FSMContext) -> None:
-    """Handle departure date input."""
-    if not re.match(r"^\d{2}\.\d{2}\.\d{4}$", message.text):
-        await message.answer("Noto'g'ri format. Iltimos DD.MM.YYYY formatida kiriting.")
-        return
-
-    try:
-        date = datetime.strptime(message.text, "%d.%m.%Y").date()
-    except ValueError:
-        await message.answer("Noto'g'ri sana. Qayta urinib ko'ring.")
-        return
-
-    await state.update_data(departure_date=date)
-    await state.set_state(PassengerRequestStates.waiting_for_departure_time)
-
-    await message.answer(
-        "🕐 <b>Chuqish vaqtini kiriting (HH:MM):</b>\n\n"
-        "Masalan: 18:30",
-        parse_mode="HTML",
-        reply_markup=cancel_keyboard(),
-    )
-
-
-@router.message(PassengerRequestStates.waiting_for_departure_time, F.text)
-async def handle_departure_time(message: Message, state: FSMContext) -> None:
-    """Handle departure time input."""
-    if not re.match(r"^\d{2}:\d{2}$", message.text):
-        await message.answer("Noto'g'ri format. Iltimos HH:MM formatida kiriting.")
-        return
-
-    try:
-        t = time(*map(int, message.text.split(":")))
-    except ValueError:
-        await message.answer("Noto'g'ri vaqt. Qayta urinib ko'ring.")
-        return
-
-    await state.update_data(departure_time=t)
-    await state.set_state(PassengerRequestStates.waiting_for_max_price)
-
-    await message.answer(
-        "💰 <b>Maksimal narxni kiriting (so'm, ixtiyoriy):</b>\n\n"
-        "Agar cheklov yo'q bo'lsa, '0' yoki hech narsa yozmasdan keyingi bosqichga o'ting.",
-        parse_mode="HTML",
-        reply_markup=cancel_keyboard(),
-    )
 
 
 @router.message(PassengerRequestStates.waiting_for_max_price, F.text)
@@ -203,20 +227,24 @@ async def handle_comment(message: Message, state: FSMContext) -> None:
 
     await state.set_state(PassengerRequestStates.waiting_for_confirmation)
 
+    departure_date = data.get("departure_date")
+    departure_time = data.get("departure_time")
+    max_price = data.get("max_price_per_seat")
+    date_display = departure_date.strftime("%d.%m.%Y") if departure_date else "Noma'lum"
+    time_display = departure_time.strftime("%H:%M") if departure_time else "Noma'lum"
+    price_display = f"{max_price:,} so'm" if max_price else "cheklanmagan"
+    comment_display = html.escape(comment) if comment else "yo'q"
+
     summary = (
         "📋 <b>So'rovingiz tasdiqlash uchun:</b>\n\n"
         f"📍 Qayerdan: <b>{html.escape(data.get('origin_label', 'Noma\'lum'))}</b>\n"
         f"📍 Qayerga: <b>{html.escape(data.get('destination_label', 'Noma\'lum'))}</b>\n"
         f"👥 Yo'lovchilar: <b>{data.get('passenger_count', 1)}</b>\n"
-        f"📅 Sana: <b>{data.get('departure_date', 'Noma\'lum')}</b>\n"
-        f"🕐 Vaqt: <b>{data.get('departure_time', 'Noma\'lum')}</b>\n"
+        f"📅 Sana: <b>{date_display}</b>\n"
+        f"🕐 Vaqt: <b>{time_display}</b>\n"
+        f"💰 Maksimal narx: <b>{price_display}</b>\n"
+        f"💬 Izoh: <b>{comment_display}</b>\n"
     )
-    if data.get("max_price_per_seat"):
-        summary += f"💰 Maksimal narx: <b>{data['max_price_per_seat']:,} so'm</b>\n"
-    if data.get("comment"):
-        summary += f"💬 Izoh: <b>{html.escape(data['comment'])}</b>\n"
-
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -235,9 +263,6 @@ async def handle_comment(message: Message, state: FSMContext) -> None:
 async def confirm_request(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm and create the passenger request."""
     data = await state.get_data()
-
-    # Create the request through Django service
-    from bot.services.passenger import create_passenger_request
 
     try:
         request = await create_passenger_request(
@@ -265,14 +290,16 @@ async def confirm_request(callback: CallbackQuery, state: FSMContext) -> None:
                 "Hozircha mos yo'lov topilmadi. So'rovingiz faol, "
                 "haydovchi e'lon qilganda sizga xabar beramiz."
             )
+        await _send_main_menu(callback.message, callback.from_user.id)
     except BusinessError as error:
-        await callback.message.edit_text(
-            f"❌ {html.escape(error.message)}\n\n"
-            "Qayta urinib ko'ring."
-        )
+        await state.clear()
+        await callback.message.edit_text(f"❌ {html.escape(error.message)}")
+        await _send_main_menu(callback.message, callback.from_user.id)
     except Exception:
         logger.exception("Passenger request creation failed")
-        await callback.message.edit_text("❌ Kutilmagan xatolik yuz berdi. Keyinroq qayta urinib ko'ring.")
+        await state.clear()
+        await callback.message.edit_text("❌ Kutilmagan xatolik yuz berdi.")
+        await _send_main_menu(callback.message, callback.from_user.id)
 
 
 @router.message(F.text == "📋 Mening so'rovlarim")
@@ -318,24 +345,48 @@ async def show_my_orders(message: Message, user_id: int | None = None) -> None:
     await message.answer(text, parse_mode="HTML")
 
 
+def _seat_keyboard(trip) -> InlineKeyboardMarkup:
+    seats = min(trip.available_seats, MAX_SEATS_PER_ORDER)
+    buttons = [
+        InlineKeyboardButton(text=f"💺 {n}", callback_data=f"booktrip:{trip.pk}:{n}")
+        for n in range(1, seats + 1)
+    ]
+    rows = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.message(F.text == "🔍 Yo'lov topish")
 async def find_ride(message: Message, user_id: int | None = None) -> None:
-    """Show active requests that can be matched."""
-    from bot.services.passenger import get_active_requests
-
-    requests = await get_active_requests(user_id or message.from_user.id)
-    if not requests:
-        await message.answer("Sizda faol so'rovlar yo'q. Avval so'rov yarating.")
+    """Show drivers' trips that can be booked right now."""
+    trips = await platform.get_bookable_trips(user_id or message.from_user.id)
+    if not trips:
+        await message.answer(
+            "Hozircha sotiladigan yo'lovlar yo'q. Keyinroq qayta urinib ko'ring."
+        )
         return
+    for trip in trips:
+        await message.answer(
+            format_trip_for_user(trip),
+            parse_mode="HTML",
+            reply_markup=_seat_keyboard(trip),
+        )
 
-    for passenger_request in requests:
-        matches = await get_matching_trips(passenger_request.pk)
-        if matches:
-            await _send_matches(message, passenger_request.pk, matches)
-        else:
-            await message.answer(
-                f"So'rov #{passenger_request.pk} uchun hozircha mos yo'lov topilmadi."
-            )
+
+@router.callback_query(F.data.startswith("booktrip:"))
+async def book_trip(callback: CallbackQuery) -> None:
+    try:
+        _, trip_id, seats = callback.data.split(":", maxsplit=3)
+        order = await platform.book_trip(callback.from_user.id, int(trip_id), int(seats))
+    except (ValueError, BusinessError) as error:
+        text = error.message if isinstance(error, BusinessError) else "Band qilish tugmasi noto'g'ri."
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer("Buyurtma haydovchiga yuborildi.")
+    if callback.message:
+        await callback.message.answer(
+            f"Buyurtma #{order.pk} yaratildi. Holati: {order.get_status_display()}. "
+            "O'rinlar haydovchi qabul qilgandan keyin band qilinadi."
+        )
 
 
 @router.callback_query(F.data.startswith("book_match:"))
@@ -401,7 +452,10 @@ async def refresh_matches(callback: CallbackQuery) -> None:
     PassengerRequestStates.waiting_for_destination,
 ))
 async def location_invalid_input(message: Message) -> None:
-    await message.answer("Manzilni Telegram lokatsiya sifatida yuboring yoki /cancel bosing.")
+    await message.answer(
+        "Manzilni Telegram lokatsiya sifatida yuboring.",
+        reply_markup=location_keyboard(),
+    )
 
 
 @router.message(StateFilter(
@@ -411,16 +465,52 @@ async def location_invalid_input(message: Message) -> None:
     PassengerRequestStates.waiting_for_max_price,
     PassengerRequestStates.waiting_for_comment,
 ))
-async def passenger_text_step_invalid_input(message: Message) -> None:
+async def passenger_text_step_invalid_input(message: Message, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current == PassengerRequestStates.waiting_for_departure_date.state:
+        await message.answer(
+            "Sana tanlash uchun tugmalardan foydalaning:",
+            reply_markup=await make_date_keyboard(),
+        )
+        return
+    if current == PassengerRequestStates.waiting_for_departure_time.state:
+        data = await state.get_data()
+        date_str = data.get("departure_date_str")
+        if date_str:
+            await message.answer(
+                "Vaqtni tanlash uchun tugmalardan foydalaning:",
+                reply_markup=await make_time_keyboard(date_str),
+            )
+        else:
+            await state.set_state(PassengerRequestStates.waiting_for_departure_date)
+            await message.answer(
+                "Avval sanani tanlang:",
+                reply_markup=await make_date_keyboard(),
+            )
+        return
     await message.answer("Bu bosqichda matn yuboring yoki /cancel buyrug'ini bosing.")
 
 
 @router.callback_query(F.data == "cancel_flow")
 async def cancel_flow(callback: CallbackQuery, state: FSMContext) -> None:
-    """Cancel the current passenger flow."""
+    """Cancel the current flow and return to the main menu."""
+    from aiogram.exceptions import TelegramBadRequest
+
     await state.clear()
     if callback.message:
-        await callback.message.edit_text("Amal bekor qilindi.")
+        try:
+            user = await platform.get_user(callback.from_user.id)
+            is_driver = user.is_driver_role
+        except BusinessError:
+            is_driver = False
+        try:
+            await callback.message.edit_text("Amal bekor qilindi.")
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(
+            "Asosiy menyu:",
+            reply_markup=main_menu_keyboard(is_driver),
+        )
     await callback.answer()
 
 
@@ -435,8 +525,9 @@ async def edit_request(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await callback.message.edit_text("So'rovni boshidan tahrirlashni boshlaymiz.")
         await callback.message.answer(
-            "📍 <b>Qo'shilish manzilini tanlang:</b>",
+            "📍 <b>Qo'shilish manzilini yuboring:</b>\n\n"
+            "Pastdagi tugma orqali lokatsiyangizni yuboring.",
             parse_mode="HTML",
-            reply_markup=cancel_keyboard(),
+            reply_markup=location_keyboard(),
         )
     await callback.answer()

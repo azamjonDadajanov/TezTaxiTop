@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from asgiref.sync import sync_to_async
 
-from apps.core.exceptions import ResourceNotFound, UnauthorizedOrderAccess
+from apps.core.exceptions import ActionNotAllowed, ResourceNotFound, UnauthorizedOrderAccess
 
 
 def _get_user(telegram_id: int):
@@ -369,6 +369,46 @@ async def book_match(
     seats: int | None = None,
 ):
     return await sync_to_async(_book_match)(telegram_id, request_id, match_id, seats)
+
+
+def _bookable_trips(telegram_id: int):
+    from django.utils import timezone
+
+    from apps.rides.selectors import get_bookable_trips
+
+    user = _get_user(telegram_id)
+    trips = (
+        get_bookable_trips()
+        .filter(departure_time__gte=timezone.now())
+        .exclude(driver__user__pk=user.pk)
+        .order_by("departure_time")[:30]
+    )
+    return list(trips)
+
+
+async def get_bookable_trips(telegram_id: int):
+    return await sync_to_async(_bookable_trips)(telegram_id)
+
+
+def _book_trip(telegram_id: int, trip_id: int, seats: int):
+    from apps.orders.constants import TERMINAL_STATUSES
+    from apps.orders.services import create_order
+    from apps.rides.selectors import get_orders_by_trip, get_trip_by_id
+
+    user = _get_user(telegram_id)
+    trip = get_trip_by_id(trip_id)
+    if trip is None:
+        raise ResourceNotFound("Yo'lov topilmadi.")
+    existing = get_orders_by_trip(trip).filter(passenger__pk=user.pk).exclude(
+        status__in=TERMINAL_STATUSES
+    )
+    if existing.exists():
+        raise ActionNotAllowed("Siz bu yo'lovga allaqachon buyurtma bergansiz.")
+    return create_order(passenger=user, trip=trip, seats_booked=seats)
+
+
+async def book_trip(telegram_id: int, trip_id: int, seats: int):
+    return await sync_to_async(_book_trip)(telegram_id, trip_id, seats)
 
 
 def _get_matching_for_user(telegram_id: int, request_id: int):

@@ -12,6 +12,7 @@ class DriverTripStates(StatesGroup):
     waiting_for_origin = State()
     waiting_for_destination = State()
     waiting_for_departure_datetime = State()
+    waiting_for_trip_conflict = State()
     waiting_for_seats = State()
     waiting_for_price = State()
     waiting_for_comment = State()

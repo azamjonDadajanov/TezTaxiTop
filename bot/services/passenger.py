@@ -127,3 +127,18 @@ def format_matches_for_user(matches: Iterable) -> str:
             )
         )
     return "\n\n".join(entries)
+
+
+def format_trip_for_user(trip) -> str:
+    """Render a bookable driver trip as Telegram-safe HTML."""
+    driver_user = trip.driver.user
+    driver_name = driver_user.display_name or driver_user.username
+    departure = timezone.localtime(trip.departure_time).strftime("%d.%m.%Y %H:%M")
+    return "\n".join(
+        (
+            f"<b>{html.escape(trip.route_label())}</b>",
+            f"🕐 {departure} | 💺 {trip.available_seats} ta bo'sh o'rin",
+            f"💰 {trip.price_per_seat:,.0f} so'm/joy | "
+            f"⭐ {trip.driver.rating} | {html.escape(driver_name)}",
+        )
+    )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -9,8 +11,50 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     WebAppInfo,
 )
+from django.utils import timezone
 
 from bot.config import TELEGRAM_WEBAPP_URL, validate_telegram_webapp_url
+
+
+async def make_date_keyboard() -> InlineKeyboardMarkup:
+    """Inline calendar: pick a date first."""
+    now = timezone.localtime()
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for i in range(7):
+        date = (now + timedelta(days=i)).strftime("%d.%m.%Y")
+        row.append(InlineKeyboardButton(text=date, callback_data=f"datetime:date:{date}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_flow")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def make_time_keyboard(date_str: str) -> InlineKeyboardMarkup:
+    """Inline time picker for a chosen date: 00:00 through 23:00."""
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for hour in range(24):
+        time_str = f"{hour:02d}:00"
+        row.append(
+            InlineKeyboardButton(
+                text=time_str,
+                callback_data=f"datetime:time:{date_str}:{time_str}",
+            )
+        )
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="🔙 Orqaga", callback_data="datetime:back"),
+        InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_flow"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def main_menu_keyboard(is_driver: bool = False) -> ReplyKeyboardMarkup:

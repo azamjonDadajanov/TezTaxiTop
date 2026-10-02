@@ -28,7 +28,15 @@ async def _show_business_error(message: Message, error: BusinessError) -> None:
 @router.message(F.text == "❌ Bekor qilish")
 async def cancel_current_flow(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Joriy amal bekor qilindi.")
+    try:
+        user = await platform.get_user(message.from_user.id)
+        is_driver = user.is_driver_role
+    except BusinessError:
+        is_driver = False
+    await message.answer(
+        "Joriy amal bekor qilindi.",
+        reply_markup=main_menu_keyboard(is_driver),
+    )
 
 
 @router.message(Command("profile"))
