@@ -241,6 +241,33 @@ export type Order = ApiItem & {
   is_reviewable?: boolean
 }
 
+export type OpenChatResponse = {
+  thread: {
+    id: number
+    order_id: number
+    other_party_name?: string
+    unread_count?: number
+  }
+  order_id: number
+  created: boolean
+}
+
+export async function openChat(params: { order_id?: number; trip_id?: number; request_id?: number }) {
+  const response = await api.post<OpenChatResponse>('/chat/chats/open/', params)
+  return response.data
+}
+
+export async function createBooking(params: {
+  trip?: number
+  request?: number
+  request_id?: number
+  seats_booked?: number
+  passenger_note?: string
+}) {
+  const response = await api.post<Order>('/orders/orders/', params)
+  return response.data
+}
+
 export function toArray<T>(payload: T[] | { results?: T[] } | undefined): T[] {
   if (Array.isArray(payload)) return payload
   return payload?.results ?? []

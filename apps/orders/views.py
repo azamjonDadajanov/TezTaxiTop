@@ -88,7 +88,36 @@ class OrderViewSet(
         data = dict(serializer.validated_data)
         companion = data.pop("companion", None)
 
-        trip = get_trip_by_id(data.pop("trip"))
+        passenger_request_id = data.pop("request", None) or data.pop("request_id", None)
+        trip_id = data.pop("trip", None)
+
+        if passenger_request_id is not None:
+            from apps.rides.selectors import get_request_by_id
+
+            passenger_request = get_request_by_id(passenger_request_id)
+            if passenger_request is None:
+                raise ResourceNotFound("So'rov topilmadi.")
+
+            trip = None
+            if trip_id is not None:
+                trip = get_trip_by_id(trip_id)
+                if trip is None:
+                    raise ResourceNotFound("Yo'lov topilmadi.")
+
+            try:
+                order = order_services.book_passenger_request(
+                    driver_user=request.user,
+                    passenger_request=passenger_request,
+                    trip=trip,
+                )
+            except BusinessError as exc:
+                raise _raise_business(exc) from exc
+            return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+        if trip_id is None:
+            raise DRFValidationError({"trip": "Yo'lov tanlanishi shart."})
+
+        trip = get_trip_by_id(trip_id)
         if trip is None:
             raise ResourceNotFound("Yo'lov topilmadi.")
 
@@ -99,6 +128,16 @@ class OrderViewSet(
         except BusinessError as exc:
             raise _raise_business(exc) from exc
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Buyurtma berish / band qilish",
+        description="Yo'lovchi taksini band qiladi yoki haydovchi yo'lovchi so'rovini qabul qiladi.",
+        request=OrderCreateSerializer,
+        responses={201: OrderSerializer},
+    )
+    @action(detail=False, methods=["post"])
+    def book(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
 
     # -- driver side actions --------------------------------------------------
     @extend_schema(summary="Buyurtmani qabul qilish (o'rinlar band qilinadi)", request=None, responses={200: OrderSerializer})

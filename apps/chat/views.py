@@ -17,6 +17,7 @@ from apps.chat.serializers import (
     ChatReadResponseSerializer,
     ChatThreadListSerializer,
     ChatThreadSerializer,
+    OpenChatRequestSerializer,
 )
 from apps.core.exceptions import BusinessError
 from apps.orders.selectors import get_order_by_id
@@ -26,6 +27,48 @@ def _handle_business_error(exc: BusinessError):
     from rest_framework.exceptions import ValidationError as DRFValidationError
 
     return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary="Suhbatni ochish yoki yaratish",
+        description=(
+            "Buyurtma (order_id), yo'lov (trip_id) yoki so'rov (request_id) bo'yicha "
+            "suhbatni ochadi yoki yaratadi. Agar suhbat allaqachon mavjud bo'lsa, "
+            "dublikat yaratmasdan mavjudini qaytaradi."
+        ),
+        request=OpenChatRequestSerializer,
+        responses={200: ChatThreadSerializer, 201: ChatThreadSerializer},
+    )
+)
+class OpenChatView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request) -> Response:
+        serializer = OpenChatRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            thread, created = chat_services.get_or_create_conversation(
+                user=request.user,
+                order_id=data.get("order_id"),
+                trip_id=data.get("trip_id"),
+                request_id=data.get("request_id"),
+            )
+        except BusinessError as exc:
+            raise _handle_business_error(exc) from exc
+
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        thread_data = ChatThreadSerializer(thread, context={"request": request}).data
+        return Response(
+            {
+                "thread": thread_data,
+                "order_id": thread.order_id,
+                "created": created,
+            },
+            status=status_code,
+        )
 
 
 @extend_schema_view(

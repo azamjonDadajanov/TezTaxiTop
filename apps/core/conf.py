@@ -58,7 +58,7 @@ MATCHING_TIME_TOLERANCE_MINUTES: int = getattr(
 DRIVER_MAP_RADIUS_KM: float = float(getattr(settings, "DRIVER_MAP_RADIUS_KM", 25))
 
 #: Hard ceiling for a client supplied radius (km).
-DRIVER_MAP_MAX_RADIUS_KM: float = float(getattr(settings, "DRIVER_MAP_MAX_RADIUS_KM", 50))
+DRIVER_MAP_MAX_RADIUS_KM: float = float(getattr(settings, "DRIVER_MAP_MAX_RADIUS_KM", 25))
 
 #: Upper bound of markers one map response may carry.
 DRIVER_MAP_MAX_RESULTS: int = getattr(settings, "DRIVER_MAP_MAX_RESULTS", 120)
@@ -69,7 +69,7 @@ DRIVER_MAP_MAX_RESULTS: int = getattr(settings, "DRIVER_MAP_MAX_RESULTS", 120)
 PASSENGER_MAP_RADIUS_KM: float = float(getattr(settings, "PASSENGER_MAP_RADIUS_KM", 25))
 
 #: Hard ceiling for a client supplied radius (km) on the passenger map.
-PASSENGER_MAP_MAX_RADIUS_KM: float = float(getattr(settings, "PASSENGER_MAP_MAX_RADIUS_KM", 50))
+PASSENGER_MAP_MAX_RADIUS_KM: float = float(getattr(settings, "PASSENGER_MAP_MAX_RADIUS_KM", 25))
 
 #: Upper bound of taxi markers one passenger-map response may carry.
 PASSENGER_MAP_MAX_RESULTS: int = getattr(settings, "PASSENGER_MAP_MAX_RESULTS", 120)

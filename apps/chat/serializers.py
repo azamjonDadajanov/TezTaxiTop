@@ -95,3 +95,18 @@ class ChatReadResponseSerializer(serializers.Serializer):
     marked_read = serializers.IntegerField(
         help_text="Bu chaqiruvda o'qilgan deb belgilangan xabarlar soni."
     )
+
+
+class OpenChatRequestSerializer(serializers.Serializer):
+    """Payload for opening or creating a conversation."""
+
+    order_id = serializers.IntegerField(required=False, allow_null=True)
+    trip_id = serializers.IntegerField(required=False, allow_null=True)
+    request_id = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if not any(attrs.get(k) is not None for k in ("order_id", "trip_id", "request_id")):
+            raise serializers.ValidationError(
+                "Kamida bitta parametr ko'rsatilishi shart (order_id, trip_id yoki request_id)."
+            )
+        return attrs

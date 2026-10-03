@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   Bell, CarFront, CarTaxiFront, ChevronDown, CircleHelp, CreditCard, LayoutDashboard, LogOut,
-  Menu, MapPinned, MessageCircle, MoreHorizontal, NotebookTabs, Repeat2, Settings, ShieldCheck, Sparkles,
+  Menu, MapPinned, MessageCircle, MoreHorizontal, Navigation, NotebookTabs, Repeat2, Settings, ShieldCheck, Sparkles,
   Star, UserRound, UsersRound, WalletCards, X,
 } from 'lucide-react'
 import { useAuth } from '../authContext'
@@ -10,6 +10,7 @@ import { useAuth } from '../authContext'
 const allNavigation = [
   { to: '/', label: 'Bosh sahifa', icon: LayoutDashboard, group: 'Asosiy' },
   { to: '/onboarding', label: 'Ro‘yxatdan o‘tish', icon: Sparkles, group: 'Asosiy' },
+  { to: '/directions', label: 'Yo‘nalishlar', icon: Navigation, group: 'Safar' },
   { to: '/trips', label: 'Safarlar', icon: CarFront, group: 'Safar' },
   { to: '/map', label: 'Xarita', icon: MapPinned, group: 'Safar' },
   { to: '/taxi-map', label: 'Taksi xaritasi', icon: CarTaxiFront, group: 'Safar' },
@@ -50,8 +51,8 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
   const title = allNavigation.find((item) => item.to === location.pathname)?.label || 'TezTaxiTop'
   const displayName = user?.full_name || user?.username || 'Foydalanuvchi'
   const bottomPaths = mode === 'driver'
-    ? ['/', '/trips', '/map', '/matching']
-    : ['/', '/taxi-map', '/requests', '/matching']
+    ? ['/', '/directions', '/trips', '/map']
+    : ['/', '/directions', '/taxi-map', '/requests']
   const bottom = bottomPaths.map((to) => allNavigation.find((item) => item.to === to)).filter((item) => item !== undefined)
 
   function changeMode(next: 'passenger' | 'driver') {

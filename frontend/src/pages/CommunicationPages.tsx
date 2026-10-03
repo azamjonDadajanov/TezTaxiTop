@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, Check, CircleAlert, Headphones, MessageCircle, Send, Star } from 'lucide-react'
 import { api, dateTime, readableError, toArray, type ApiItem, type Order } from '../api'
@@ -23,9 +24,17 @@ export function NotificationsPage() {
 }
 
 export function ChatPage() {
+  const location = useLocation()
+  const navOrderId = (location.state as { orderId?: number } | null)?.orderId ?? null
   const queryClient = useQueryClient()
-  const [orderId, setOrderId] = useState<number | null>(null)
+  const [orderId, setOrderId] = useState<number | null>(navOrderId)
   const [text, setText] = useState('')
+
+  useEffect(() => {
+    if (navOrderId) {
+      setOrderId(navOrderId)
+    }
+  }, [navOrderId])
   const threads = useQuery({ queryKey: ['chat-threads'], queryFn: async () => toArray((await api.get<Thread[] | { results: Thread[] }>('/chat/chats/')).data) })
   const messages = useQuery({ queryKey: ['chat-messages', orderId], enabled: Boolean(orderId), refetchInterval: 8000, queryFn: async () => {
     const previous = queryClient.getQueryData<{ results: ChatMessage[]; next_after_id: number; is_closed: boolean }>(['chat-messages', orderId])

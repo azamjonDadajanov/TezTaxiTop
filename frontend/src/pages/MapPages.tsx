@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { Armchair, CalendarClock, CarTaxiFront, Compass, Crosshair, Navigation, RefreshCw, Route, UserRound, UsersRound, X, ZoomIn } from 'lucide-react'
 import { api, dateTime, endpointLabel, money, readableError, type NearbyRequests, type NearbyTrips, type RouteEndpoint } from '../api'
 import { PageHeading, RouteLine, StatusBadge } from '../components/ui'
+import { RouteActionButtons } from '../components/TripActionCard'
 
 type LatLng = [number, number]
 
@@ -359,8 +360,15 @@ return <div className="map-page">
 
         {selected.comment && <p className="driver-map-sheet-note"><UserRound size={14} />{selected.comment}</p>}
 
+        <RouteActionButtons
+          requestId={selected.id}
+          seatsBooked={selected.passenger_count || 1}
+          variant="map"
+          onBookSuccess={() => void nearby.refetch()}
+        />
+
         <div className="driver-map-sheet-actions">
-          <button className="button button-dark button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
+          <button className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
           <button className="button button-outline button-small" onClick={showDriver}><Crosshair size={15} />Mening joylashuvim</button>
         </div>
       </article>}
@@ -639,8 +647,15 @@ export function PassengerMapPage() {
 
         {selected.comment && <p className="driver-map-sheet-note"><UserRound size={14} />{selected.comment}</p>}
 
+        <RouteActionButtons
+          tripId={selected.id}
+          seatsBooked={1}
+          variant="map"
+          onBookSuccess={() => void nearby.refetch()}
+        />
+
         <div className="driver-map-sheet-actions">
-          <button className="button button-dark button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
+          <button className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
           <button className="button button-outline button-small" onClick={showViewer}><Crosshair size={15} />Mening joylashuvim</button>
         </div>
       </article>}

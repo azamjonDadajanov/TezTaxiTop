@@ -42,17 +42,46 @@ class ThreadTests(ChatTestBase):
         self.assertEqual(ChatThread.objects.count(), 1)
 
     def test_order_creation_opens_the_chat_automatically(self) -> None:
-        order = self.data.create_order(self.trip, self.passenger)
+        trip2 = self.data.create_trip(self.driver)
+        order = self.data.create_order(trip2, self.passenger)
         thread = ChatThread.objects.get(order=order)
         self.assertTrue(thread.is_open)
 
     def test_terminal_order_keeps_a_closed_thread(self) -> None:
-        order = self.data.create_order(self.trip, self.passenger)
+        trip2 = self.data.create_trip(self.driver)
+        order = self.data.create_order(trip2, self.passenger)
         order_services.accept_order(order)
         order_services.cancel_order_by_passenger(order)
         thread = chat_services.ensure_thread_for_order(order)
         self.assertIsNotNone(thread)
         self.assertTrue(thread.is_closed)
+
+    def test_get_or_create_conversation_by_order_id(self) -> None:
+        thread, created = chat_services.get_or_create_conversation(
+            user=self.passenger,
+            order_id=self.order.id,
+        )
+        self.assertFalse(created)
+        self.assertEqual(thread.id, self.thread.id)
+
+    def test_get_or_create_conversation_by_trip_id_deduplicates(self) -> None:
+        # self.order already exists for self.trip and self.passenger
+        thread, created = chat_services.get_or_create_conversation(
+            user=self.passenger,
+            trip_id=self.trip.id,
+        )
+        self.assertFalse(created)
+        self.assertEqual(thread.id, self.thread.id)
+
+    def test_open_chat_endpoint_by_order(self) -> None:
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(user=self.passenger)
+        response = client.post("/api/v1/chat/chats/open/", {"order_id": self.order.id}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["order_id"], self.order.id)
+        self.assertFalse(response.data["created"])
 
 
 class MessageTests(ChatTestBase):

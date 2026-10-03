@@ -5,7 +5,7 @@
  *  exactly which endpoints a screen asked for - which is how the "nothing is
  *  chosen for the user" requirement is asserted.
  */
-import type { AxiosAdapter, AxiosRequestConfig, AxiosResponse } from 'axios'
+import axios, { type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse, AxiosError } from 'axios'
 import { api } from '../api'
 
 export type StubReply = { status?: number; data?: unknown }
@@ -21,13 +21,24 @@ const adapter: AxiosAdapter = async (config) => {
   const url = String(config.url)
   requestedUrls.push(url)
   const reply = await responder(config)
-  return {
+  const status = reply.status ?? 200
+  const response: AxiosResponse = {
     data: reply.data ?? null,
-    status: reply.status ?? 200,
-    statusText: 'OK',
+    status,
+    statusText: status >= 400 ? 'Error' : 'OK',
     headers: {},
     config,
-  } as AxiosResponse
+  }
+  if (status >= 400) {
+    throw new AxiosError(
+      `Request failed with status code ${status}`,
+      String(status),
+      config,
+      undefined,
+      response,
+    )
+  }
+  return response
 }
 
 export function stubApi(next: Responder) {

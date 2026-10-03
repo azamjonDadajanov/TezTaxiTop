@@ -381,7 +381,7 @@ MATCHING_TIME_TOLERANCE_MINUTES = env_int("MATCHING_TIME_TOLERANCE_MINUTES", 60)
 # radius of its own, how far a client may stretch it, and how many markers the
 # response may carry.
 DRIVER_MAP_RADIUS_KM = env_int("DRIVER_MAP_RADIUS_KM", 25)
-DRIVER_MAP_MAX_RADIUS_KM = env_int("DRIVER_MAP_MAX_RADIUS_KM", 50)
+DRIVER_MAP_MAX_RADIUS_KM = env_int("DRIVER_MAP_MAX_RADIUS_KM", 25)
 DRIVER_MAP_MAX_RESULTS = env_int("DRIVER_MAP_MAX_RESULTS", 120)
 
 # --- Passenger map ---------------------------------------------------------
@@ -389,7 +389,7 @@ DRIVER_MAP_MAX_RESULTS = env_int("DRIVER_MAP_MAX_RESULTS", 120)
 # how far a client may stretch it, and how many taxi markers one response may
 # carry. Same defaults, kept separate so the two maps can be tuned apart.
 PASSENGER_MAP_RADIUS_KM = env_int("PASSENGER_MAP_RADIUS_KM", 25)
-PASSENGER_MAP_MAX_RADIUS_KM = env_int("PASSENGER_MAP_MAX_RADIUS_KM", 50)
+PASSENGER_MAP_MAX_RADIUS_KM = env_int("PASSENGER_MAP_MAX_RADIUS_KM", 25)
 PASSENGER_MAP_MAX_RESULTS = env_int("PASSENGER_MAP_MAX_RESULTS", 120)
 
 # Periodic maintenance. Every task is idempotent, so a missed or duplicated

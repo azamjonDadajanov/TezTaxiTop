@@ -213,6 +213,24 @@ class DriverCannotBookOwnTrip(BusinessError):
     default_message = "Haydovchi o'z yo'loviga buyurtma bera olmaydi."
 
 
+class DuplicateBookingError(BusinessError):
+    code = "duplicate_booking"
+    status_code = 409
+    default_message = "Siz ushbu safar uchun allaqachon buyurtma bergansiz."
+
+
+class IncompatibleRouteError(BusinessError):
+    code = "incompatible_route"
+    status_code = 400
+    default_message = "Yo'nalishlar mos kelmadi."
+
+
+class IncompatibleTimeError(BusinessError):
+    code = "incompatible_time"
+    status_code = 400
+    default_message = "Jo'nash vaqtlari mos kelmadi."
+
+
 # ---------------------------------------------------------------------------
 # Subscriptions
 # ---------------------------------------------------------------------------

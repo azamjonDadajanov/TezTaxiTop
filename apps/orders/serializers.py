@@ -66,21 +66,33 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderCreateSerializer(serializers.Serializer):
-    """Payload of ``POST /api/v1/orders/``."""
+    """Payload of ``POST /api/v1/orders/orders/`` or booking."""
 
-    trip = serializers.IntegerField()
-    seats_booked = serializers.IntegerField(min_value=1, max_value=8)
+    trip = serializers.IntegerField(required=False, allow_null=True)
+    request = serializers.IntegerField(required=False, allow_null=True)
+    request_id = serializers.IntegerField(required=False, allow_null=True)
+    seats_booked = serializers.IntegerField(min_value=1, max_value=8, required=False, default=1)
     passenger_note = serializers.CharField(
         required=False, allow_blank=True, max_length=500
     )
     companion = OrderPassengerSerializer(required=False, allow_null=True)
 
-    def validate_trip(self, value: int) -> int:
-        from apps.rides.selectors import get_trip_by_id
+    def validate(self, attrs):
+        trip_id = attrs.get("trip")
+        req_id = attrs.get("request") or attrs.get("request_id")
+        if trip_id is None and req_id is None:
+            raise serializers.ValidationError("Yo'lov (trip) yoki so'rov (request) ko'rsatilishi shart.")
+        if trip_id is not None:
+            from apps.rides.selectors import get_trip_by_id
 
-        if get_trip_by_id(value) is None:
-            raise serializers.ValidationError("Yo'lov topilmadi.")
-        return value
+            if get_trip_by_id(trip_id) is None:
+                raise serializers.ValidationError({"trip": "Yo'lov topilmadi."})
+        if req_id is not None:
+            from apps.rides.selectors import get_request_by_id
+
+            if get_request_by_id(req_id) is None:
+                raise serializers.ValidationError({"request": "So'rov topilmadi."})
+        return attrs
 
 
 class OrderPassengerCreateSerializer(serializers.Serializer):

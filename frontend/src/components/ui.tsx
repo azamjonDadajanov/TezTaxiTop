@@ -22,10 +22,32 @@ export function RouteLine({ from, to }: { from?: string; to?: string }) {
   return <div className="route-line-item"><span className="route-dot route-dot-from" /><div><strong>{from || 'Manzil aniqlanmagan'}</strong><MoveRight size={17} /><strong>{to || 'Manzil aniqlanmagan'}</strong></div><span className="route-dot route-dot-to" /></div>
 }
 
-export function ContentState({ loading, loadingLabel, error, empty, onRetry, children }: { loading: boolean; loadingLabel?: string; error?: string; empty?: boolean; onRetry?: () => void; children: ReactNode }) {
+export function ContentState({
+  loading,
+  loadingLabel,
+  error,
+  empty,
+  emptyTitle = 'Hozircha ma’lumot yo‘q',
+  emptyDescription = 'Yangi ma’lumot paydo bo‘lganda shu yerda ko‘rinadi.',
+  emptyIcon,
+  emptyAction,
+  onRetry,
+  children,
+}: {
+  loading: boolean
+  loadingLabel?: string
+  error?: string
+  empty?: boolean
+  emptyTitle?: string
+  emptyDescription?: string
+  emptyIcon?: typeof MapPin
+  emptyAction?: ReactNode
+  onRetry?: () => void
+  children: ReactNode
+}) {
   if (loading) return <LoadingState label={loadingLabel} />
   if (error) return <ErrorState message={error} onRetry={onRetry} />
-  if (empty) return <EmptyState title="Hozircha ma’lumot yo‘q" description="Yangi ma’lumot paydo bo‘lganda shu yerda ko‘rinadi." />
+  if (empty) return <EmptyState title={emptyTitle} description={emptyDescription} icon={emptyIcon} action={emptyAction} />
   return <>{children}</>
 }
 

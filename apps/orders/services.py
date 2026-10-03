@@ -17,19 +17,28 @@ This is the most safety critical module in the project. Its contract:
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db import connection, transaction
 from django.utils import timezone
 
+from apps.core import conf
 from apps.core.exceptions import (
     BusinessValidationError,
     DriverCannotBookOwnTrip,
+    DriverNotVerified,
+    DuplicateBookingError,
+    IncompatibleRouteError,
+    IncompatibleTimeError,
+    InsufficientSeats,
     InvalidOrderState,
     InvalidOrderTransition,
     NotADriver,
     OrderNotFound,
+    PassengerRequestNotActive,
     ResourceNotFound,
+    SubscriptionRequired,
     TripNotActive,
     UnauthorizedOrderAccess,
     UserIsBlocked,
@@ -38,7 +47,7 @@ from apps.core.validators import normalize_phone_number
 from apps.orders.constants import ALLOWED_TRANSITIONS, MAX_SEATS_PER_ORDER
 from apps.orders.models import Order, OrderPassenger, OrderStatus
 from apps.orders.selectors import get_order_by_id, get_orders_by_trip
-from apps.rides.models import DriverTrip, DriverTripStatus
+from apps.rides.models import DriverTrip, DriverTripStatus, PassengerRequest, PassengerRequestStatus
 from apps.rides.services import release_seats, reserve_seats
 from apps.users.models import User
 
@@ -118,11 +127,23 @@ def create_order(
     if trip.status not in (DriverTripStatus.ACTIVE, DriverTripStatus.FULL):
         raise TripNotActive()
     if seats_booked > trip.available_seats:
-        from apps.core.exceptions import InsufficientSeats
-
         raise InsufficientSeats(
             details={"available_seats": trip.available_seats, "requested_seats": seats_booked}
         )
+
+    # Prevent duplicate active bookings for the same trip and passenger
+    existing_order = Order.objects.filter(
+        trip=trip,
+        passenger=passenger,
+        status__in=(
+            OrderStatus.PENDING,
+            OrderStatus.ACCEPTED,
+            OrderStatus.DRIVER_ARRIVED,
+            OrderStatus.IN_PROGRESS,
+        ),
+    ).first()
+    if existing_order is not None:
+        raise DuplicateBookingError("Siz ushbu safar uchun allaqachon buyurtma bergansiz.")
 
     # Snapshot the price. The order never reads the trip price again.
     price_per_seat = Decimal(trip.price_per_seat)
@@ -148,6 +169,104 @@ def create_order(
 
     logger.info("Buyurtma yaratildi: #%s (trip=%s, o'rin=%s)", order.pk, trip.pk, seats_booked)
     return order
+
+
+@transaction.atomic
+def book_passenger_request(
+    *,
+    driver_user: User,
+    passenger_request: PassengerRequest,
+    trip: DriverTrip | None = None,
+) -> Order:
+    """A driver books / accepts a nearby passenger request.
+
+    Reuses the existing matching compatibility rules and order creation
+    pipeline:
+    1. Validates the driver and their profile / vehicle / subscription.
+    2. Validates passenger request status and expiry.
+    3. Finds or validates a compatible driver trip (route <= 25km, same direction,
+       time tolerance <= 60m, available seats >= requested).
+    4. Guards against duplicate active bookings.
+    5. Creates the order and accepts it atomically, locking seats.
+    """
+    if driver_user.is_blocked:
+        raise UserIsBlocked()
+
+    driver_profile = getattr(driver_user, "driver_profile", None)
+    if driver_profile is None:
+        raise NotADriver("Bu amal faqat haydovchilar uchun mavjud.")
+    if not driver_profile.is_verified:
+        raise DriverNotVerified("Haydovchi profili hali tasdiqlanmagan.")
+    if conf.require_active_subscription_to_drive() and not driver_profile.has_active_subscription:
+        raise SubscriptionRequired("Yo'lov qabul qilish uchun faol obuna kerak.")
+
+    if passenger_request.status != PassengerRequestStatus.ACTIVE:
+        raise PassengerRequestNotActive("Ushbu so'rov endi faol emas.")
+    if passenger_request.departure_until and passenger_request.departure_until < timezone.now():
+        raise PassengerRequestNotActive("Ushbu so'rovning muddati o'tgan.")
+    if passenger_request.passenger_id == driver_user.pk:
+        raise BusinessValidationError("O'z so'rovingizga buyurtma bera olmaysiz.")
+
+    from apps.matching.compatibility import route_compatibility, time_is_compatible
+
+    seats_needed = passenger_request.passenger_count or 1
+
+    if trip is None:
+        candidate_trips = (
+            DriverTrip.objects.filter(
+                driver=driver_profile,
+                status=DriverTripStatus.ACTIVE,
+                available_seats__gte=seats_needed,
+                departure_time__gte=timezone.now() - timedelta(minutes=conf.TRIP_DEPARTURE_GRACE_MINUTES),
+            )
+            .order_by("departure_time")
+        )
+        for cand in candidate_trips:
+            compat = route_compatibility(cand, passenger_request)
+            if compat.compatible and time_is_compatible(cand.departure_time, passenger_request):
+                trip = cand
+                break
+        if trip is None:
+            raise BusinessValidationError("Ushbu so'rovga mos keladigan faol yo'lovingiz topilmadi.")
+    else:
+        if trip.driver_id != driver_profile.pk:
+            raise UnauthorizedOrderAccess("Bu yo'lov sizning profilingizga tegishli emas.")
+        if trip.status not in (DriverTripStatus.ACTIVE, DriverTripStatus.FULL):
+            raise TripNotActive("Yo'lov faol emas.")
+        compat = route_compatibility(trip, passenger_request)
+        if not compat.compatible:
+            raise IncompatibleRouteError("Yo'nalishlar mos kelmadi (25 km radius yoki teskari yo'nalish).")
+        if not time_is_compatible(trip.departure_time, passenger_request):
+            raise IncompatibleTimeError("Jo'nash vaqti so'rov vaqtiga mos kelmadi.")
+        if trip.available_seats < seats_needed:
+            raise InsufficientSeats(
+                details={
+                    "available_seats": trip.available_seats,
+                    "requested_seats": seats_needed,
+                }
+            )
+
+    # Check for existing active booking between this trip and passenger
+    existing_order = Order.objects.filter(
+        trip=trip,
+        passenger=passenger_request.passenger,
+        status__in=(
+            OrderStatus.PENDING,
+            OrderStatus.ACCEPTED,
+            OrderStatus.DRIVER_ARRIVED,
+            OrderStatus.IN_PROGRESS,
+        ),
+    ).first()
+    if existing_order is not None:
+        raise DuplicateBookingError("Ushbu yo'lovchi uchun allaqachon buyurtma mavjud.")
+
+    order = create_order(
+        passenger=passenger_request.passenger,
+        trip=trip,
+        seats_booked=seats_needed,
+        passenger_note=passenger_request.comment or "",
+    )
+    return accept_order(order)
 
 
 @transaction.atomic
@@ -407,6 +526,7 @@ def _notify_parties(order: Order, reason: str) -> None:
 __all__ = [
     "accept_order",
     "add_order_passenger",
+    "book_passenger_request",
     "cancel_order_by_driver",
     "cancel_order_by_passenger",
     "complete_order",
