@@ -9,6 +9,10 @@ Entry points:
     Driver side: which passenger requests fit one trip - the list the
     "suitable trips" screen renders without asking the user to pick anything.
 
+``get_suitable_requests_by_trip(driver)``
+    Driver side, whole answer in one call: every bookable trip of that driver
+    with its ranked passengers, trips without a match left out.
+
 ``score_trip_for_request(trip, request)``
     Pure scoring function - no database writes. Given a pair it returns the
     component scores and the total, or an ``excluded`` reason when one of the
@@ -17,10 +21,19 @@ Entry points:
 A pair must clear four hard filters before it is ranked (see
 :func:`exclusion_reason`): the routes must be *geographically* compatible
 (same direction, every corresponding point within
-``MATCHING_MAX_ROUTE_DISTANCE_KM``), the departure must be within
-``MATCHING_TIME_TOLERANCE_MINUTES`` of the requested window, the party must
-fit into the free seats, and the trip must still be bookable, verified,
-subscribed and inside the budget.
+``MATCHING_MAX_ROUTE_DISTANCE_KM`` - inclusive, so exactly 25 km still
+matches), the departure must be within ``MATCHING_TIME_TOLERANCE_MINUTES`` of
+the requested window, the party must fit into the free seats, and the trip must
+still be bookable, verified, subscribed and inside the budget.
+
+The requested departure is a **window**, not an instant:
+``apps.rides.models.PassengerRequest`` stores ``departure_from`` /
+``departure_until``, and :func:`apps.matching.compatibility.time_difference_minutes`
+measures the trip departure against the nearer end of that window. So "0
+minutes apart" means "the departure sits inside the window", and the 60-minute
+tolerance is the distance to the window's edge. That window semantics is the
+stored business rule and is what the tests in
+``apps.matching.test_suitable_requests.TimeRuleTests`` pin down.
 
 Every weight is a module constant so the algorithm is auditable in one screen.
 """
@@ -177,20 +190,49 @@ def _vehicle_component(trip: DriverTrip) -> Decimal:
 # ---------------------------------------------------------------------------
 # Hard filters
 # ---------------------------------------------------------------------------
+#: How the route rule reached its verdict for a pair. Sent to the UI so a
+#: screen can tell a measured geographic match apart from a legacy
+#: identity-only one and never present the latter as a 25 km measurement.
+ROUTE_BASIS_COORDINATES = "coordinates"
+ROUTE_BASIS_ROUTE_IDENTITY = "route_identity"
+ROUTE_BASIS_INCOMPARABLE = "incomparable"
+
+
+def route_match_basis(trip: DriverTrip, request: PassengerRequest) -> str:
+    """Which rule judged this pair's route, as one of the ``ROUTE_BASIS_*`` names.
+
+    ``"coordinates"``
+        All four endpoints were known, so the great-circle rule decided.
+    ``"route_identity"``
+        At least one row carries no coordinates (anything written before the
+        endpoint snapshots existed), so the pre-geocoding catalogue / city pair
+        decided. The pair can be shown, but **no** kilometre figure exists for
+        it and the API must not invent one.
+    ``"incomparable"``
+        Neither rule can judge the pair, so it is never shown.
+    """
+    measured = compatibility.route_compatibility(trip, request)
+    if measured.reason != "missing_coordinates":
+        return ROUTE_BASIS_COORDINATES
+    if _same_route_identity(trip, request) or _same_route_identity(request, trip):
+        return ROUTE_BASIS_ROUTE_IDENTITY
+    return ROUTE_BASIS_INCOMPARABLE
+
+
 def route_exclusion_reason(trip: DriverTrip, request: PassengerRequest) -> str:
     """Why these two routes cannot be served together, or ``""``.
 
     The geographic rule (same direction, every corresponding point within
     ``MATCHING_MAX_ROUTE_DISTANCE_KM``) decides whenever all four points are
-    known. Rows that carry no coordinates - anything written before the
-    endpoint snapshots existed - fall back to the catalogue / city identity,
-    which is the rule the platform used before coordinates were compared:
-    never a guess, and never a place-name comparison of two free-text values.
+    known. Rows that carry no coordinates fall back to the catalogue / city
+    identity, which is the rule the platform used before coordinates were
+    compared: never a guess, and never a place-name comparison of two free-text
+    values. :func:`route_match_basis` reports which of the two fired.
     """
     measured = compatibility.route_compatibility(trip, request)
     if measured.reason != "missing_coordinates":
         return "" if measured.compatible else measured.reason
-    if _same_route_identity(trip, request) or _same_route_identity(request, trip):
+    if route_match_basis(trip, request) == ROUTE_BASIS_ROUTE_IDENTITY:
         return ""
     return "route_not_comparable"
 
@@ -566,6 +608,43 @@ def get_ranked_matches_for_trip(trip: DriverTrip) -> list[TripMatch]:
     ]
 
 
+@dataclass(frozen=True)
+class SuitableTripRequests:
+    """One driver trip together with the passengers that fit it.
+
+    ``results`` is already ranked by the backend and already hard-filtered, so a
+    consumer renders it as-is and never re-sorts or re-checks it.
+    """
+
+    trip: DriverTrip
+    results: list[TripMatch]
+
+
+def get_suitable_requests_by_trip(
+    driver, *, max_results: int | None = None
+) -> list[SuitableTripRequests]:
+    """Every bookable trip of one driver with the passengers that fit it.
+
+    This is the whole driver-side answer in one call: the screen asks "which
+    passengers suit my trips?" and must not have to name a trip first, so no
+    trip is ever picked for the driver. Each group is produced by
+    :func:`get_ranked_matches_for_trip`, so the order inside a group is the
+    backend ranking - the frontend renders it, it never re-sorts it.
+
+    Trips whose ranking is empty are left out entirely: a trip with no
+    suitable passenger has nothing to show. Trips are ordered by departure,
+    then by id, so two reads against the same rows return the same groups.
+    """
+    limit = conf.MATCHING_MAX_RESULTS if max_results is None else max_results
+    grouped: list[SuitableTripRequests] = []
+    trips = ride_selectors.get_trips_by_driver(driver).bookable().order_by("departure_time", "pk")
+    for trip in trips:
+        matches = get_ranked_matches_for_trip(trip)
+        if matches:
+            grouped.append(SuitableTripRequests(trip=trip, results=matches[:limit]))
+    return grouped
+
+
 def refresh_all_active_matches() -> dict:
     """Used by the periodic Celery task; safe to run repeatedly."""
     requests = ride_selectors.get_matchable_requests().filter(
@@ -586,18 +665,24 @@ def get_required_request(request_id: int) -> PassengerRequest:
 
 __all__ = [
     "MAX_SCORE",
+    "ROUTE_BASIS_COORDINATES",
+    "ROUTE_BASIS_INCOMPARABLE",
+    "ROUTE_BASIS_ROUTE_IDENTITY",
     "MatchScore",
+    "SuitableTripRequests",
     "exclusion_reason",
     "get_candidate_requests",
     "get_candidate_trips",
     "get_ranked_matches",
     "get_ranked_matches_for_trip",
     "get_required_request",
+    "get_suitable_requests_by_trip",
     "rank_requests_for_trip",
     "rank_trips_for_request",
     "refresh_all_active_matches",
     "refresh_matches_for_request",
     "refresh_matches_for_trip",
     "route_exclusion_reason",
+    "route_match_basis",
     "score_trip_for_request",
 ]

@@ -76,8 +76,11 @@ class TaxiTestData:
         verified: bool = True,
         vehicle_verified: bool = True,
         with_subscription: bool = True,
+        vehicle_seats: int = 4,
         **kwargs,
     ) -> DriverBundle:
+        """``vehicle_seats`` is the *total* seat count, driver seat included, so a
+        scenario that needs four sellable seats asks for ``vehicle_seats=5``."""
         index = self._next()
         user = User.objects.create_user(
             username=kwargs.pop("username", f"driver{index}"),
@@ -98,7 +101,7 @@ class TaxiTestData:
             model="Chery",
             year=2020,
             color="white",
-            seats_count=4,
+            seats_count=vehicle_seats,
         )
         if vehicle_verified:
             vehicle_services.verify_vehicle(vehicle, verified=True)

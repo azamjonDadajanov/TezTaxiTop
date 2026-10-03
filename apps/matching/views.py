@@ -20,6 +20,7 @@ from apps.core import conf
 from apps.matching import selectors as matching_selectors
 from apps.matching import services as matching_services
 from apps.matching.serializers import (
+    DriverSuitableRequestsResponseSerializer,
     MatchingWeightsSerializer,
     RankedRequestsResponseSerializer,
     RankedTripsResponseSerializer,
@@ -138,6 +139,46 @@ class TripRequestsRankingView(APIView):
                 ).data,
             }
         )
+
+
+class DriverSuitableRequestsView(APIView):
+    """``GET /api/v1/matching/trips/suitable-requests/`` - the driver's whole screen.
+
+    The "suitable passengers" screen opens with no selection and no button: the
+    driver asks *which* passengers suit *which* of their trips and this is the
+    single call that answers it. Every bookable trip of the driver comes back
+    with its ranked passengers, trips without a match are omitted, and an empty
+    ``trips`` list is the honest "nothing suitable right now" answer.
+
+    Nothing is selected on the driver's behalf - there is no ``trip_id`` in the
+    path - and nothing is written: the ranking is recomputed live, exactly like
+    :class:`TripRequestsRankingView`.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = DriverSuitableRequestsResponseSerializer
+
+    @extend_schema(
+        summary="Yo'lovlarim uchun mos so'rovlar (barcha yo'lovlar)",
+        description=(
+            "Haydovchining har bir faol yo'lovi va unga mos keladigan so'rovlar, ball "
+            "kamayish tartibida. Yo'nalish (geografik), yo'nalish yo'nalishi (bir xil "
+            "yo'na), chuqish vaqti (+/-1 soat) va o'rinlar bo'yicha qatiy filtrlar "
+            "serverda qo'llanadi; natija darhol hisoblanadi. Mos so'rovi yo'q yo'lovlar "
+            "javobga kiritilmaydi."
+        ),
+        responses={200: DriverSuitableRequestsResponseSerializer},
+    )
+    def get(self, request) -> Response:
+        driver = getattr(request.user, "driver_profile", None)
+        if driver is None:
+            raise PermissionDenied("Bu amal uchun haydovchi profili kerak.")
+        groups = matching_services.get_suitable_requests_by_trip(driver)
+        payload = DriverSuitableRequestsResponseSerializer(
+            {"max_score": matching_services.MAX_SCORE, "trips": groups},
+            context={"request": request},
+        ).data
+        return Response(payload)
 
 
 class RefreshMatchesView(APIView):

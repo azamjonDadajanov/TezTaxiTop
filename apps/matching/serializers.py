@@ -34,7 +34,11 @@ class TripMatchSerializer(serializers.ModelSerializer):
     driver_rating = serializers.DecimalField(
         source="trip.driver.rating", max_digits=3, decimal_places=2, read_only=True
     )
-    vehicle_name = serializers.CharField(source="trip.vehicle.name", read_only=True)
+    # ``Vehicle`` has no ``name`` column - only ``brand``/``model``/``plate_number``
+    # and the ``display_name`` property. Pointing ``source`` at a missing
+    # attribute does not raise here: a ``read_only`` field is not ``required``, so
+    # DRF skipped it and ``vehicle_name`` was quietly absent from every payload.
+    vehicle_name = serializers.CharField(source="trip.vehicle.display_name", read_only=True)
     plate_number = serializers.CharField(source="trip.vehicle.plate_number", read_only=True)
     # -- the passenger half of the pair ------------------------------------
     passenger_name = serializers.CharField(source="request.passenger.display_name", read_only=True)
@@ -52,6 +56,7 @@ class TripMatchSerializer(serializers.ModelSerializer):
     time_difference_minutes = serializers.SerializerMethodField()
     route_compatible = serializers.SerializerMethodField()
     route_status = serializers.SerializerMethodField()
+    route_match_basis = serializers.SerializerMethodField()
     reasons = serializers.SerializerMethodField()
     components = serializers.SerializerMethodField()
 
@@ -77,6 +82,7 @@ class TripMatchSerializer(serializers.ModelSerializer):
             "time_difference_minutes",
             "route_compatible",
             "route_status",
+            "route_match_basis",
             "driver_name",
             "driver_rating",
             "passenger_name",
@@ -125,6 +131,16 @@ class TripMatchSerializer(serializers.ModelSerializer):
         """``""`` when the routes fit, otherwise the machine readable reason."""
         return matching_services.route_exclusion_reason(obj.trip, obj.request)
 
+    def get_route_match_basis(self, obj: TripMatch) -> str:
+        """Which rule judged the route: measured coordinates or legacy identity.
+
+        A ``route_identity`` row was matched on the catalogue / city pair
+        because its coordinates do not exist, so its distance fields are
+        ``None`` and the UI must show them as unknown rather than as a measured
+        value inside the 25 km limit.
+        """
+        return matching_services.route_match_basis(obj.trip, obj.request)
+
     def get_reasons(self, obj: TripMatch) -> list[str]:
         return obj.top_reasons()
 
@@ -159,6 +175,37 @@ class RankedRequestsResponseSerializer(serializers.Serializer):
     trip_id = serializers.IntegerField()
     max_score = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
     results = TripMatchSerializer(many=True, read_only=True)
+
+
+class SuitableTripRequestsSerializer(serializers.Serializer):
+    """One driver trip with the passengers that fit it, backend order.
+
+    ``results`` is :func:`apps.matching.services.get_ranked_matches_for_trip`
+    verbatim - already ordered by the backend ranking and already hard-filtered,
+    so the screen has nothing left to decide. Every measurement a row carries is
+    the value the matcher measured; nothing here is recomputed.
+    """
+
+    trip_id = serializers.IntegerField(source="trip.pk")
+    route = serializers.CharField(source="trip.route_label")
+    departure_time = serializers.DateTimeField(source="trip.departure_time")
+    available_seats = serializers.IntegerField(source="trip.available_seats")
+    total_seats = serializers.IntegerField(source="trip.total_seats")
+    vehicle_name = serializers.CharField(source="trip.vehicle.display_name", read_only=True)
+    plate_number = serializers.CharField(source="trip.vehicle.plate_number", read_only=True)
+    results = TripMatchSerializer(many=True)
+
+
+class DriverSuitableRequestsResponseSerializer(serializers.Serializer):
+    """Envelope of the driver's "suitable passengers" screen feed.
+
+    ``trips`` holds only the trips that actually have a match, so an empty list
+    means "this driver has no suitable passenger at the moment" and not "the
+    first trip was wrong".
+    """
+
+    max_score = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
+    trips = SuitableTripRequestsSerializer(many=True)
 
 
 class RefreshMatchesResponseSerializer(serializers.Serializer):

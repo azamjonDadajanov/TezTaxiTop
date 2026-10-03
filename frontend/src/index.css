@@ -203,6 +203,19 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
 .match-picker { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 18px; }
 .match-picker label { flex: 1; }
 
+/* The driver's suitable-passengers screen: one block per trip that has at least
+   one match. Nothing on it selects a passenger or a trip. */
+.trip-match-groups { display: grid; gap: 14px; }
+.trip-match-group .section-heading h2 .route-line-item { margin-top: 4px; }
+.trip-match-group .record-detail-grid { margin-top: 0; }
+.trip-match-group .record-list { margin-top: 14px; }
+.match-note { margin: 12px 0 0; color: #846427; font-size: 10px; line-height: 1.55; }
+.request-picker { flex: 1; min-width: 0; }
+.picker-tab-row { display: grid; gap: 8px; }
+.picker-tab span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.picker-tab strong { font-size: 12px; }
+.picker-tab small { overflow: hidden; color: #77857b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
 /* The measurements behind a match: route distance, departure difference and
    the detour the driver would drive. Same numbers the matcher decided on. */
 .match-metrics { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

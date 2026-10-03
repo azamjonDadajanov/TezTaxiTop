@@ -17,6 +17,7 @@ urlpatterns = [
     path("", include(router.urls)),
     path("matching/requests/<int:request_id>/trips/", views.RequestTripsRankingView.as_view(), name="request-trips"),
     path("matching/requests/<int:request_id>/refresh/", views.RefreshMatchesView.as_view(), name="request-refresh"),
+    path("matching/trips/suitable-requests/", views.DriverSuitableRequestsView.as_view(), name="trip-suitable-requests"),
     path("matching/trips/<int:trip_id>/requests/", views.TripRequestsRankingView.as_view(), name="trip-requests"),
     path("matching/weights/", views.WeightsView.as_view(), name="weights"),
 ]

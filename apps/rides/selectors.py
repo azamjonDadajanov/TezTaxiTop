@@ -389,9 +389,17 @@ def get_expired_request_candidates(expiry_hours: int) -> QuerySet[PassengerReque
 # ---------------------------------------------------------------------------
 # Passenger request - driver map ("passengers near me")
 # ---------------------------------------------------------------------------
-#: Kilometres per degree of latitude (mean value), the constant the Haversine
-#: helper in :mod:`apps.rides.services` implies.
-KM_PER_DEGREE_LATITUDE = 111.32
+#: Kilometres per degree of latitude used by the bounding boxes below.
+#:
+#: The true value is ~111.1949 km (that is what the Haversine helper in
+#: :mod:`apps.rides.services` actually measures), while 111.32 is the usual
+#: textbook figure. This constant is a **divisor of a bounding box**, so it has
+#: to be *smaller* than the truth: dividing a larger number by a larger divisor
+#: would shrink the box below the circle it is supposed to contain, and the
+#: pre-filter would then silently drop rows that sit exactly on the radius -
+#: including a pair the 25 km rule is meant to accept. The 0.15% slack keeps the
+#: box a strict superset; the exact great-circle test still decides afterwards.
+KM_PER_DEGREE_LATITUDE = 111.0
 
 #: Floor for ``cos(latitude)``: a single degree of longitude collapses to zero
 #: metres at the poles, and without the floor the longitude delta explodes.
@@ -407,6 +415,10 @@ def bounding_box(
     proximity search stays a plain range filter - answerable by PostgreSQL and
     SQLite alike, with no geospatial extension installed. The exact circle test
     runs afterwards on the small result of that filter.
+
+    The box is a deliberate **superset** of the circle (see
+    :data:`KM_PER_DEGREE_LATITUDE`): a candidate that the exact test would
+    accept can never be filtered out before it was ever measured.
     """
     center_latitude = float(latitude)
     center_longitude = float(longitude)

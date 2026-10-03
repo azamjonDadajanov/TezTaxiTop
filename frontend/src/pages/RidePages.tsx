@@ -121,22 +121,51 @@ type Match = ApiItem & {
   pickup_location?: string
   dropoff_location?: string
   departure_time?: string
+  departure_from?: string | null
+  departure_until?: string | null
   price_per_seat?: number | string
   available_seats?: number
   required_seats?: number
   driver_name?: string
+  driver_rating?: string
+  vehicle_name?: string
+  plate_number?: string
   passenger_name?: string
+  passenger_username?: string
   distance_difference_km?: number | null
+  pickup_offset_km?: number | null
+  dropoff_offset_km?: number | null
   route_deviation_km?: number | null
   time_difference_minutes?: number
+  route_compatible?: boolean
+  route_status?: string
+  route_match_basis?: 'coordinates' | 'route_identity' | 'incomparable'
   score?: string
   rank?: number
+  components?: Record<string, string>
   reasons?: string[]
 }
 
-/** The trip route as the API labels it (``"A → B"``), split for the route line. */
+/** One driver trip with the passengers that fit it, exactly as
+ *  `GET /matching/trips/suitable-requests/` returns it. `results` is already
+ *  ranked by the backend, so the screen renders it in place. */
+type SuitableTripGroup = {
+  trip_id: number
+  route: string
+  departure_time: string
+  available_seats: number
+  total_seats: number
+  vehicle_name?: string
+  plate_number?: string
+  results: Match[]
+}
+
+/** Envelope of `GET /matching/trips/suitable-requests/`. */
+type SuitablePassengersPayload = { max_score?: string; trips?: SuitableTripGroup[] }
+
+/** The route label as the API writes it (`"A -> B"`), split for the route line. */
 function routeEnds(route?: string) {
-  const [from, to] = (route || '').split(' → ')
+  const [from, to] = (route || '').split(/\s*->\s*/)
   return { from, to }
 }
 
@@ -146,72 +175,163 @@ function kilometres(value?: number | null) {
   return value == null ? '—' : `${value.toFixed(1)} km`
 }
 
+/** A pair matched on the pre-geocoding catalogue / city pair has no coordinates,
+ *  so there is no kilometre figure to show. `coordinates` is the only basis that
+ *  measured anything, and only then may the UI quote the 25 km limit. */
+function hasMeasuredRoute(match: Match) {
+  return match.route_match_basis === undefined || match.route_match_basis === 'coordinates'
+}
+
 function MatchMetric({ value, label }: { value: ReactNode; label: string }) {
   return <span><b>{value}</b><small>{label}</small></span>
 }
 
-export function MatchingPage() {
-  const mode = useRoleMode()
+/** The measurements the backend returned for one matched passenger request.
+ *  Nothing here is recomputed in the browser: every number is the value the
+ *  matcher measured when it accepted or rejected the pair. */
+function MatchMeasurements({ match }: { match: Match }) {
+  const measured = hasMeasuredRoute(match)
+  return <>
+    <div className="match-metrics">
+      <MatchMetric value={measured ? `${match.time_difference_minutes ?? 0} daqiqa` : '—'} label="Chuqish farqi" />
+      <MatchMetric value={measured ? kilometres(match.pickup_offset_km) : '—'} label="Chiqish nuqtasi farqi" />
+      <MatchMetric value={measured ? kilometres(match.dropoff_offset_km) : '—'} label="Tushish nuqtasi farqi" />
+      <MatchMetric value={measured ? kilometres(match.distance_difference_km) : '—'} label="Yo‘nalish farqi (maks.)" />
+      <MatchMetric value={measured ? kilometres(match.route_deviation_km) : '—'} label="Qo‘shimcha masofa" />
+      <MatchMetric value={`${match.required_seats ?? 1} / ${match.available_seats ?? 0}`} label="Kerakli / bo‘sh o‘rin" />
+    </div>
+    {!measured && <p className="match-note">Koordinata mavjud emas: masofa o‘lcholmadi, moslik katalog yo‘li bo‘yicha tekshirildi.</p>}
+  </>
+}
+
+/** One suitable passenger, as the backend ranked them (this card never sorts). */
+function SuitablePassengerCard({ match }: { match: Match }) {
+  return <article className="record-card match-card" data-testid="suitable-passenger">
+    <div className="record-top"><span className="record-id">SO‘ROV #{match.request_id} · MOSLIK #{match.rank ?? '—'}</span><span className="score-pill">{match.score ?? '—'} ball</span></div>
+    <div className="match-counterparty"><UsersRound size={15} /><span><strong>{match.passenger_name || 'Yo‘lovchi'}</strong> · {match.required_seats ?? 1} yo‘lovchi</span></div>
+    <RouteLine from={match.pickup_location || undefined} to={match.dropoff_location || undefined} />
+    <div className="record-detail-grid">
+      <span><CalendarClock size={15} />Yo‘lovchi vaqti: {dateTime(match.departure_from || undefined)} – {dateTime(match.departure_until || undefined)}</span>
+      <span><CalendarClock size={15} />Haydovchi vaqti: {dateTime(match.departure_time)}</span>
+      <strong>{money(match.price_per_seat)}</strong>
+    </div>
+    <MatchMeasurements match={match} />
+    {match.route_status ? <div className="match-reasons"><span>{match.route_status}</span></div> : null}
+    {match.reasons && match.reasons.length > 0 && <div className="match-reasons">{match.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
+  </article>
+}
+
+/** The driver's whole "suitable passengers" screen.
+ *
+ *  There is no selection state and no `<select>`: one call asks the backend which
+ *  passengers suit which of the driver's trips, and the answer arrives already
+ *  grouped, already filtered and already ranked. A driver with three trips is not
+ *  answered for the first one only - every trip that has a match is shown, and a
+ *  trip without one is not shown at all.
+ */
+function DriverSuitablePassengers() {
+  const matches = useQuery({ queryKey: ['matching', 'driver-suitable-requests'], queryFn: async () => {
+    const { data } = await api.get<SuitablePassengersPayload>('/matching/trips/suitable-requests/')
+    return data?.trips ?? []
+  } })
+  const groups = matches.data ?? []
+  return <ContentState
+    loading={matches.isLoading}
+    loadingLabel="Mos yo‘lovchilar yuklanmoqda…"
+    error={matches.error ? readableError(matches.error) : undefined}
+    onRetry={() => void matches.refetch()}>
+    {groups.length === 0
+      ? <EmptyState icon={Search} title="Mos yo‘lovchilar topilmadi." description="Hozircha hech qanday faol yo‘lovingizga mos keladigan so‘rov yo‘q. Yangi so‘rovlar qo‘shilsa bu sahifa o‘zi yangilanadi." />
+      : <div className="trip-match-groups" data-testid="suitable-passenger-groups">
+          {groups.map((group) => <section className="form-section trip-match-group" data-testid="suitable-trip-group" key={group.trip_id}>
+            <div className="section-heading">
+              <div><span className="eyebrow">YO‘LOV #{group.trip_id}</span><h2><RouteLine from={routeEnds(group.route).from} to={routeEnds(group.route).to} /></h2></div>
+              <StatusBadge value="active" />
+            </div>
+            <div className="record-detail-grid">
+              <span><CalendarClock size={15} />{dateTime(group.departure_time)}</span>
+              <span><UsersRound size={15} />{group.available_seats} / {group.total_seats} o‘rin</span>
+              <span><CarFront size={15} />{group.vehicle_name || 'Avtomobil'}</span>
+              <strong>{group.results.length} ta mos so‘rov</strong>
+            </div>
+            <div className="record-list">{group.results.map((match) => <SuitablePassengerCard key={match.request_id ?? match.id} match={match} />)}</div>
+          </section>)}
+        </div>}
+  </ContentState>
+}
+
+/** The passenger side of the matching screen.
+ *
+ *  Ranking is per request, so a passenger with several requests has to say which
+ *  one they mean - but nothing is chosen *for* them: no `choices[0]`, no silent
+ *  fallback. A single request is unambiguous and opens on its own; several are
+ *  listed and the passenger picks explicitly.
+ */
+function PassengerSuitableTrips() {
   const queryClient = useQueryClient()
-  const passenger = mode === 'passenger'
-  const requests = useQuery({ queryKey: ['my-requests'], queryFn: async () => toArray((await api.get<PassengerRequest[] | { results: PassengerRequest[] }>('/rides/requests/')).data), enabled: passenger })
-  const trips = useQuery({ queryKey: ['my-trips'], queryFn: async () => toArray((await api.get<Trip[] | { results: Trip[] }>('/rides/trips/my_trips/')).data), enabled: !passenger })
+  const requests = useQuery({ queryKey: ['my-requests'], queryFn: async () => toArray((await api.get<PassengerRequest[] | { results: PassengerRequest[] }>('/rides/requests/')).data) })
   const [chosen, setChosen] = useState('')
   const [notice, setNotice] = useState('')
-  const choices = useMemo(() => (passenger ? requests.data ?? [] : trips.data ?? []), [passenger, requests.data, trips.data])
-  // Nothing to choose on this screen: the first trip (or request) is the one
-  // shown, so the matching list is on the screen the moment the page opens.
-  // An explicit choice is kept until it disappears from the list.
-  const fallback = choices[0]?.id != null ? String(choices[0].id) : ''
-  const selected = chosen && choices.some((item) => String(item.id) === chosen) ? chosen : fallback
-  const matches = useQuery({ queryKey: ['matching', passenger, selected], enabled: Boolean(selected), queryFn: async () => {
-    const url = passenger ? `/matching/requests/${selected}/trips/` : `/matching/trips/${selected}/requests/`
-    const { data } = await api.get<{ results?: Match[] } | Match[]>(url)
+  const open = useMemo(() => requests.data ?? [], [requests.data])
+  // An explicit choice wins, and it survives a refetch only while it is still one
+  // of the open requests. With exactly one open request there is nothing to
+  // choose - that is not `choices[0]`, it is the only candidate - so it opens on
+  // its own. With several, nothing is preselected.
+  const explicit = open.some((item) => String(item.id) === chosen) ? chosen : ''
+  const selected = explicit || (open.length === 1 ? String(open[0].id) : '')
+  const active = open.find((item) => String(item.id) === selected)
+  const matches = useQuery({ queryKey: ['matching', 'passenger-trips', selected], enabled: Boolean(selected), queryFn: async () => {
+    const { data } = await api.get<{ results?: Match[] } | Match[]>(`/matching/requests/${selected}/trips/`)
     return Array.isArray(data) ? data : data.results ?? []
   } })
-  const refresh = useMutation({ mutationFn: async () => api.post(`/matching/requests/${selected}/refresh/`), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['matching', passenger, selected] }); setNotice('Mosliklar qayta hisoblandi.') }, onError: (cause) => setNotice(readableError(cause)) })
-  const order = useMutation({ mutationFn: async (tripId: number) => {
-    const request = requests.data?.find((item) => item.id === Number(selected))
-    return api.post('/orders/orders/', { trip: tripId, seats_booked: request?.passenger_count ?? 1 })
-  }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['my-orders'] }); setNotice('Buyurtma haydovchiga yuborildi.') }, onError: (cause) => setNotice(readableError(cause)) })
+  const refresh = useMutation({ mutationFn: async () => api.post(`/matching/requests/${selected}/refresh/`), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['matching', 'passenger-trips', selected] }); setNotice('Mosliklar qayta hisoblandi.') }, onError: (cause) => setNotice(readableError(cause)) })
+  const order = useMutation({ mutationFn: async (tripId: number) => api.post('/orders/orders/', { trip: tripId, seats_booked: active?.passenger_count ?? 1 }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['my-orders'] }); setNotice('Buyurtma haydovchiga yuborildi.') }, onError: (cause) => setNotice(readableError(cause)) })
   const list = matches.data ?? []
-  const loading = !selected || matches.isLoading || (matches.isFetching && !matches.data)
-  const failure = matches.error ? readableError(matches.error) : undefined
   return <>
-    <PageHeading eyebrow="MOSLASHTIRISH" title={passenger ? 'Sizga mos safarlar' : 'Mos yo‘lovchi so‘rovlari'} description="Moslik serverda hisoblanadi: yo‘nalish (25 km), chuqish vaqti (±1 soat) va bo‘sh o‘rinlar. Ro‘yxat ochilishi bilan eng mos variant tanlanadi." />
     <section className="form-section match-picker">
-      <label>{passenger ? 'So‘rov' : 'Yo‘lov'}
-        <select value={selected} onChange={(event) => setChosen(event.target.value)}>
-          {choices.length === 0 && <option value="">Hozircha yo‘q</option>}
-          {choices.map((item) => <option key={item.id} value={item.id}>{passenger ? `So‘rov #${item.id}` : `Yo‘lov #${item.id}`} · {endpointLabel(item.origin, item.from_location_detail) || item.status}</option>)}
-        </select>
-      </label>
-      {passenger && <button className="button button-outline button-small" disabled={!selected || refresh.isPending} onClick={() => refresh.mutate()}><RefreshCw size={15} />Qayta qidirish</button>}
+      <div className="request-picker" data-testid="passenger-request-picker">
+        {open.length === 0
+          ? <p className="match-note">Faol so‘rov yo‘q. Avval yo‘nalish va vaqtni ko‘rsatib so‘rov yarating.</p>
+          : <div className="picker-tab-row">{open.map((item) => <button key={item.id} type="button" className={`picker-tab${String(item.id) === selected ? ' picker-tab-active' : ''}`} onClick={() => setChosen(String(item.id))} data-testid="passenger-request-option">
+              <span><strong>So‘rov #{item.id}</strong><small>{endpointLabel(item.origin, item.from_location_detail) || 'Manzil'} → {endpointLabel(item.destination, item.to_location_detail) || 'Manzil'}</small></span>
+            </button>)}</div>}
+      </div>
+      {active && <button className="button button-outline button-small" disabled={!selected || refresh.isPending} onClick={() => refresh.mutate()}><RefreshCw size={15} />Qayta qidirish</button>}
     </section>
     {notice && <FormNotice message={notice} />}
-    {choices.length === 0
-      ? <EmptyState icon={Search} title={passenger ? 'Faol so‘rov yo‘q' : 'Yo‘lov yo‘q'} description={passenger ? 'Mos safarlarni ko‘rish uchun avval yo‘nalishni belgilagan so‘rov yarating.' : 'Mos yo‘lovchilarni ko‘rish uchun avval yo‘lov e’lon qiling.'} />
-      : <ContentState loading={loading} error={failure} empty={false} onRetry={() => void matches.refetch()}>
-          {list.length === 0
-            ? <EmptyState icon={Search} title={passenger ? 'Bu so‘rov uchun mos safarlar topilmadi.' : 'Bu safar uchun mos yo‘lovchilar topilmadi.'} description="Yo‘nalish, chuqish vaqti yoki bo‘sh o‘rinlar bo‘yicha mos variant topilmadi." />
-            : <div className="record-list">{list.map((match) => <article className="record-card match-card" key={match.request_id ?? match.trip_id ?? match.id}>
-                <div className="record-top"><span className="record-id">MOSLIK {match.rank ? `#${match.rank}` : ''}</span><span className="score-pill">{match.score ?? '—'} ball</span></div>
-                <RouteLine from={routeEnds(match.route).from} to={routeEnds(match.route).to} />
-                {!passenger && <div className="match-counterparty"><UsersRound size={15} /><span><strong>{match.passenger_name || 'Yo‘lovchi'}</strong> · {match.pickup_location || 'Manzil'} → {match.dropoff_location || 'Manzil'} · {match.required_seats ?? 1} yo‘lovchi</span></div>}
-                <div className="record-detail-grid">
-                  <span><CalendarClock size={15} />{dateTime(match.departure_time)}</span>
-                  <span><UsersRound size={15} />{passenger ? `${match.available_seats ?? 0} ta bo‘sh o‘rin · ${match.driver_name || 'Yo‘lovchi'}` : `${match.available_seats ?? 0} ta bo‘sh o‘rin`}</span>
-                  <strong>{money(match.price_per_seat)}</strong>
-                </div>
-                <div className="match-metrics">
-                  <MatchMetric value={kilometres(match.distance_difference_km)} label="Yo‘nalish farqi" />
-                  <MatchMetric value={`${match.time_difference_minutes ?? 0} daqiqa`} label="Chuqish farqi" />
-                  <MatchMetric value={kilometres(match.route_deviation_km)} label="Qo‘shimcha masofa" />
-                  <MatchMetric value={`${match.required_seats ?? 1} / ${match.available_seats ?? 0}`} label="Kerakli / bo‘sh o‘rin" />
-                </div>
-                {match.reasons && match.reasons.length > 0 && <div className="match-reasons">{match.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
-                {passenger && match.trip_id && <div className="record-actions"><button className="button button-dark button-small" onClick={() => order.mutate(match.trip_id!)} disabled={order.isPending || !match.available_seats}>Buyurtma yuborish <ArrowRight size={15} /></button></div>}
-              </article>)}</div>}
-        </ContentState>}
+    {open.length === 0
+      ? <EmptyState icon={Search} title="Faol so‘rov yo‘q" description="Mos safarlarni ko‘rish uchun avval yo‘nalishni belgilagan so‘rov yarating." />
+      : !selected
+        ? <EmptyState icon={Search} title="Qaysi so‘rovni ko‘ramiz?" description={open.length > 1 ? 'Yuqoridagi so‘rovlardan birini tanlang — mos safarlar shu so‘rov uchun hisoblanadi.' : 'So‘rov yuklanmoqda…'} />
+        : <ContentState loading={matches.isLoading} loadingLabel="Mos safarlar yuklanmoqda…" error={matches.error ? readableError(matches.error) : undefined} onRetry={() => void matches.refetch()}>
+            {list.length === 0
+              ? <EmptyState icon={Search} title="Bu so‘rov uchun mos safarlar topilmadi." description="Yo‘nalish, chuqish vaqti yoki bo‘sh o‘rinlar bo‘yicha mos variant topilmadi." />
+              : <div className="record-list">{list.map((match) => <article className="record-card match-card" key={match.trip_id ?? match.id}>
+                  <div className="record-top"><span className="record-id">MOSLIK {match.rank ? `#${match.rank}` : ''}</span><span className="score-pill">{match.score ?? '—'} ball</span></div>
+                  <RouteLine from={routeEnds(match.route).from} to={routeEnds(match.route).to} />
+                  <div className="record-detail-grid">
+                    <span><CalendarClock size={15} />{dateTime(match.departure_time)}</span>
+                    <span><UsersRound size={15} />{match.available_seats ?? 0} ta bo‘sh o‘rin · {match.driver_name || 'Haydovchi'}</span>
+                    <strong>{money(match.price_per_seat)}</strong>
+                  </div>
+                  <MatchMeasurements match={match} />
+                  {match.reasons && match.reasons.length > 0 && <div className="match-reasons">{match.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
+                  <div className="record-actions"><button className="button button-dark button-small" onClick={() => order.mutate(match.trip_id!)} disabled={order.isPending || !match.available_seats}>Buyurtma yuborish <ArrowRight size={15} /></button></div>
+                </article>)}</div>}
+          </ContentState>}
+  </>
+}
+
+export function MatchingPage() {
+  const mode = useRoleMode()
+  const passenger = mode === 'passenger'
+  return <>
+    <PageHeading
+      eyebrow="MOSLASHTIRISH"
+      title={passenger ? 'Sizga mos safarlar' : 'Mos yo‘lovchi so‘rovlari'}
+      description={passenger
+        ? 'Moslik serverda hisoblanadi: yo‘nalish (25 km), chuqish vaqti (±1 soat) va bo‘sh o‘rinlar. Reyting bo‘yicha tartiblangan.'
+        : 'Har bir yo‘lovingiz uchun mos yo‘lovchilar avtomatik topiladi: yo‘nalish (25 km), yo‘nalish yo‘nalishi (bir xil yo‘na), chuqish vaqti (±1 soat) va bo‘sh o‘rinlar bo‘yicha. Tanlash yoki qidirish shart emas.'} />
+    {passenger ? <PassengerSuitableTrips /> : <DriverSuitablePassengers />}
   </>
 }
