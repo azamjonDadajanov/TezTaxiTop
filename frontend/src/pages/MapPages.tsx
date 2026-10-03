@@ -372,12 +372,8 @@ return <div className="map-page">
  *  map marker and the info sheet can never drift apart. */
 const CAR_PATH = 'M6.2 11.1 7.7 6.4A2 2 0 0 1 9.5 5.1h5a2 2 0 0 1 1.8 1.3l1.5 4.7 1.1.4a1.8 1.8 0 0 1 1.2 1.7v3.3a1 1 0 0 1-1 1h-1.2a1 1 0 0 1-1-1v-.7H7.1v.7a1 1 0 0 1-1 1H4.9a1 1 0 0 1-1-1v-3.3a1.8 1.8 0 0 1 1.2-1.7zM9.2 11.9h5.6l-1.1-3.4a.7.7 0 0 0-.7-.5h-2a.7.7 0 0 0-.7.5zm-3 3.4a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8m11.6 0a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8'
 
-/** A taxi seen from the top, drawn in the marker's colour. Leaflet's `divIcon`
- *  takes markup, so this one stays a string. */
-const CAR_GLYPH = `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="${CAR_PATH}"/></svg>`
-
-/** The same car as a component. React renders a string as escaped text, so the
- *  info sheet cannot reuse `CAR_GLYPH` — the markup would show up verbatim. */
+/** The same car as a component, for the info sheet. Leaflet's `divIcon` takes
+ *  markup rather than React output, so the sheet draws its own copy here. */
 function CarGlyph() {
   return <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d={CAR_PATH} /></svg>
 }
@@ -500,7 +496,7 @@ export function PassengerMapPage() {
       const ink = body ? (isLight(body) ? '#1b1f22' : '#f7f9fa') : '#f7f9fa'
       const icon = L.divIcon({
         className: 'driver-map-pin-host',
-        html: `<span class="driver-map-pin driver-map-pin-${band}${body ? '' : ' driver-map-pin-unknown'}${active ? ' driver-map-pin-active' : ''}" style="--car-body:${body ?? ''};--car-ink:${ink}">${CAR_GLYPH}</span>`,
+        html: `<span class="driver-map-pin driver-map-pin-${band}${body ? '' : ' driver-map-pin-unknown'}${active ? ' driver-map-pin-active' : ''}" style="--car-body:${body ?? ''};--car-ink:${ink}">${CarGlyph()}</span>`,
         iconSize: [34, 34],
         iconAnchor: [17, 17],
       })
