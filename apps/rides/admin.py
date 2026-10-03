@@ -96,7 +96,7 @@ class DriverTripAdmin(admin.ModelAdmin):
 
     @admin.display(description=_("Marshrut"), ordering=("from_location__name",))
     def route(self, obj: DriverTrip) -> str:
-        return f"{obj.from_location.name} -> {obj.to_location.name}"
+        return f"{obj.from_location.name} -> {obj.to_location.name}" if obj.from_location and obj.to_location else "-"
 
     @admin.display(description=_("Haydovchi"), ordering=("driver__user__first_name",))
     def driver_name(self, obj: DriverTrip) -> str:
@@ -161,7 +161,7 @@ class PassengerRequestAdmin(admin.ModelAdmin):
 
     @admin.display(description=_("Marshrut"))
     def route(self, obj: PassengerRequest) -> str:
-        return f"{obj.from_location.name} -> {obj.to_location.name}"
+        return f"{obj.from_location.name} -> {obj.to_location.name}" if obj.from_location and obj.to_location else "-"
 
     @admin.display(description=_("Yo'lovchi"), ordering=("passenger__first_name",))
     def passenger_name(self, obj: PassengerRequest) -> str:
