@@ -311,7 +311,7 @@ return <div className="map-page">
       title="Atrofingizdagi yo‘lovchilar"
       description={`Faol so‘rovlar ${SEARCH_RADIUS_KM} km radiusda ko‘rsatiladi. Odam belgisini bosing — qayeraga borayotgani strelka bilan chiziladi va pastdagi kartada ma’lumot chiqadi.`}
     />
-    {source === 'fallback' && <p className="notice notice-warning driver-map-notice"><Crosshair size={16} /><p>Joylashuvni aniqlab bo‘lmadi. Xarita Toshkent markazidan boshlandi — “Meni ko‘rsatish” tugmasi bilan qayta urinib ko‘ring.</p></p>}
+    {source === 'fallback' && <div className="notice notice-warning driver-map-notice"><Crosshair size={16} /><p>Joylashuvni aniqlab bo‘lmadi. Xarita Toshkent markazidan boshlandi — “Meni ko‘rsatish” tugmasi bilan qayta urinib ko‘ring.</p></div>}
 
     <section className="driver-map-wrap">
       <div className="driver-map" ref={container} />
@@ -517,7 +517,7 @@ export function PassengerMapPage() {
       L.marker(destination, {
         icon: L.divIcon({
           className: 'driver-map-arrow-host',
-          html: `<span className="driver-map-arrow" style="transform:rotate(${bearing}deg)">${ARROW_GLYPH}</span>`,
+          html: `<span class="driver-map-arrow" style="transform:rotate(${bearing}deg)">${ARROW_GLYPH}</span>`,
           iconSize: [30, 30],
           iconAnchor: [15, 15],
         }),
@@ -577,7 +577,7 @@ export function PassengerMapPage() {
       title="Atrofingizdagi taksilar"
       description={`Yo‘lovchiga yaqin taksilar ${TAXI_RADIUS_KM} km radiusda, avtomobil rangida ko‘rsatiladi. Belgini bosing — qayeraga borayotgani strelka bilan chiziladi, xarita yo‘nalishga yaqinlashadi va pastdagi kartada ma’lumot chiqadi.`}
     />
-    {source === 'fallback' && <p className="notice notice-warning driver-map-notice"><Crosshair size={16} /><p>Joylashuvni aniqlab bo‘lmadi. Xarita Toshkent markazidan boshlandi — “Meni ko‘rsatish” tugmasi bilan qayta urinib ko‘ring.</p></p>}
+    {source === 'fallback' && <div className="notice notice-warning driver-map-notice"><Crosshair size={16} /><p>Joylashuvni aniqlab bo‘lmadi. Xarita Toshkent markazidan boshlandi — “Meni ko‘rsatish” tugmasi bilan qayta urinib ko‘ring.</p></div>}
 
     <section className="driver-map-wrap">
       <div className="driver-map" ref={container} />

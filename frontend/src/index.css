@@ -38,7 +38,7 @@ h1, h2, h3 { font-family: Manrope, sans-serif; }
 
 #root { min-height: 100vh; }
 .app-shell { min-height: 100vh; }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; display: flex; width: 248px; flex-direction: column; padding: 25px 15px 16px; color: #e8f0e8; background: var(--ink); }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30000; display: flex; width: 248px; flex-direction: column; padding: 25px 15px 16px; color: #e8f0e8; background: var(--ink); }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 26px; }
 .brand-lockup { display: inline-flex; align-items: center; gap: 9px; color: #f8fcf7; font-family: Manrope, sans-serif; font-size: 18px; font-weight: 800; white-space: nowrap; }
 .brand-top { color: var(--lime); }
@@ -339,8 +339,12 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
    natural height, the map takes everything left and reaches the window edge, so
    the page itself never scrolls. `dvh` follows the mobile browser bars. */
 .map-page { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
-.map-page .driver-map-wrap { min-height: 420px; flex: 1 1 auto; }
-.map-page .driver-map { width: 100%; height: 100%; }
+/* The wrap's height comes from flex-grow under a min-height-only ancestor, so a
+   plain `height: 100%` on the map resolves to auto (0px) and Leaflet ends up in
+   a zero-size box: HUD visible, tiles and pins clipped away. Filling the wrap as
+   a flex container works whatever way the height was established. */
+.map-page .driver-map-wrap { display: flex; min-height: 420px; flex: 1 1 auto; flex-direction: column; }
+.map-page .driver-map { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; }
 .driver-map .leaflet-control-attribution { font-size: 8px; }
 .driver-map .leaflet-control-zoom { border: 0; border-radius: 5px; box-shadow: 0 6px 16px rgba(19,49,38,.16); overflow: hidden; }
 .driver-map .leaflet-control-zoom a { color: var(--ink); border-bottom-color: #e4ebe0; font-size: 15px; }
@@ -405,7 +409,7 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
   .main-column { margin-left: 226px; }
   .dashboard-lower { gap: 20px; }
   .driver-map { height: clamp(380px, 64vh, 620px); }
-  .map-page .driver-map { height: 100%; }
+  .map-page .driver-map { height: auto; }
   .map-page .driver-map-wrap { min-height: 380px; }
 }
 @media (max-width: 800px) {
