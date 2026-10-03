@@ -32,6 +32,7 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const isMapPage = location.pathname === '/map' || location.pathname === '/taxi-map'
   const [mode, setMode] = useState<'passenger' | 'driver'>(() => user?.role === 'driver' ? 'driver' : user?.role === 'passenger' ? 'passenger' : localStorage.getItem('teztaxitop_mode') === 'driver' ? 'driver' : 'passenger')
   useEffect(() => {
     const syncMode = () => setMode(localStorage.getItem('teztaxitop_mode') === 'driver' ? 'driver' : 'passenger')
@@ -67,7 +68,7 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
 
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
+      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''} ${isMapPage ? 'sidebar-map' : ''}`}>
         <div className="sidebar-top">
           <NavLink className="brand-lockup" to="/" onClick={() => setMobileOpen(false)}><span className="brand-mark"><CarFront size={21} /></span><span>tez<span className="brand-top">taxi</span>top</span></NavLink>
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Menyuni yopish"><X size={19} /></button>
