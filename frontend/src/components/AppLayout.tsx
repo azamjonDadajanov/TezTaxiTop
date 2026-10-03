@@ -33,7 +33,6 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [mode, setMode] = useState<'passenger' | 'driver'>(() => user?.role === 'driver' ? 'driver' : user?.role === 'passenger' ? 'passenger' : localStorage.getItem('teztaxitop_mode') === 'driver' ? 'driver' : 'passenger')
-  const isMapPage = location.pathname === '/map' || location.pathname === '/taxi-map'
   useEffect(() => {
     const syncMode = () => setMode(localStorage.getItem('teztaxitop_mode') === 'driver' ? 'driver' : 'passenger')
     window.addEventListener('teztaxitop-mode-change', syncMode)
@@ -68,7 +67,7 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
 
   return (
     <div className="app-shell">
-      {!isMapPage && <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
+      <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
         <div className="sidebar-top">
           <NavLink className="brand-lockup" to="/" onClick={() => setMobileOpen(false)}><span className="brand-mark"><CarFront size={21} /></span><span>tez<span className="brand-top">taxi</span>top</span></NavLink>
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="Menyuni yopish"><X size={19} /></button>
@@ -89,9 +88,9 @@ export function AppLayout({ children, onSignOut }: { children: React.ReactNode; 
           <div className="sidebar-person"><strong>{displayName}</strong><span>{user?.role_display || user?.role}</span></div>
           <button className="icon-button logout-button" onClick={onSignOut} title="Chiqish" aria-label="Hisobdan chiqish"><LogOut size={17} /></button>
         </div>
-      </aside>}
+      </aside>
       {mobileOpen && <button className="mobile-scrim" onClick={() => setMobileOpen(false)} aria-label="Menyuni yopish" />}
-      <div className={`main-column ${isMapPage ? 'main-column-map' : ''}`}>
+      <div className="main-column">
         <header className="topbar">
           <button className="icon-button menu-trigger" onClick={() => setMobileOpen(true)} aria-label="Menyuni ochish"><Menu size={20} /></button>
           <div className="crumb"><span>TEZTAXITOP</span><i>/</i><strong>{title}</strong></div>

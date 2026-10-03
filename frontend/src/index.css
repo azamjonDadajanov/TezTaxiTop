@@ -60,7 +60,6 @@ h1, h2, h3 { font-family: Manrope, sans-serif; }
 .sidebar-person span { color: #9db1a4; font-size: 11px; }
 .logout-button { color: #a4b7aa !important; }
 .main-column { min-height: 100vh; margin-left: 248px; }
-.main-column-map { margin-left: 0; }
 .topbar { position: sticky; top: 0; z-index: 20; display: flex; height: var(--topbar-h); align-items: center; justify-content: space-between; padding: 0 38px; border-bottom: 1px solid rgba(226,233,223,.88); background: rgba(248,250,246,.91); backdrop-filter: blur(14px); }
 .crumb { display: flex; align-items: center; gap: 12px; color: #87948c; font-size: 11px; font-weight: 700; letter-spacing: 0; }
 .crumb i { color: #b3beb5; font-style: normal; }
