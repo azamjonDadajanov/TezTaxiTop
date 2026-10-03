@@ -392,8 +392,9 @@ async def get_bookable_trips(telegram_id: int):
 
 def _book_trip(telegram_id: int, trip_id: int, seats: int):
     from apps.orders.constants import TERMINAL_STATUSES
+    from apps.orders.selectors import get_orders_by_trip
     from apps.orders.services import create_order
-    from apps.rides.selectors import get_orders_by_trip, get_trip_by_id
+    from apps.rides.selectors import get_trip_by_id
 
     user = _get_user(telegram_id)
     trip = get_trip_by_id(trip_id)
