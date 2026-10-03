@@ -368,8 +368,19 @@ return <div className="map-page">
   </div>
 }
 
-/** A taxi seen from the top, drawn in the marker's colour. */
-const CAR_GLYPH = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M6.2 11.1 7.7 6.4A2 2 0 0 1 9.5 5.1h5a2 2 0 0 1 1.8 1.3l1.5 4.7 1.1.4a1.8 1.8 0 0 1 1.2 1.7v3.3a1 1 0 0 1-1 1h-1.2a1 1 0 0 1-1-1v-.7H7.1v.7a1 1 0 0 1-1 1H4.9a1 1 0 0 1-1-1v-3.3a1.8 1.8 0 0 1 1.2-1.7zM9.2 11.9h5.6l-1.1-3.4a.7.7 0 0 0-.7-.5h-2a.7.7 0 0 0-.7.5zm-3 3.4a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8m11.6 0a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8"/></svg>'
+/** The car body outline, the one source both renderings below draw from, so the
+ *  map marker and the info sheet can never drift apart. */
+const CAR_PATH = 'M6.2 11.1 7.7 6.4A2 2 0 0 1 9.5 5.1h5a2 2 0 0 1 1.8 1.3l1.5 4.7 1.1.4a1.8 1.8 0 0 1 1.2 1.7v3.3a1 1 0 0 1-1 1h-1.2a1 1 0 0 1-1-1v-.7H7.1v.7a1 1 0 0 1-1 1H4.9a1 1 0 0 1-1-1v-3.3a1.8 1.8 0 0 1 1.2-1.7zM9.2 11.9h5.6l-1.1-3.4a.7.7 0 0 0-.7-.5h-2a.7.7 0 0 0-.7.5zm-3 3.4a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8m11.6 0a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8'
+
+/** A taxi seen from the top, drawn in the marker's colour. Leaflet's `divIcon`
+ *  takes markup, so this one stays a string. */
+const CAR_GLYPH = `<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="${CAR_PATH}"/></svg>`
+
+/** The same car as a component. React renders a string as escaped text, so the
+ *  info sheet cannot reuse `CAR_GLYPH` — the markup would show up verbatim. */
+function CarGlyph() {
+  return <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d={CAR_PATH} /></svg>
+}
 
 /** The passenger's own dot: same ringed style as the driver's, so the two maps
  *  read the same way. */
@@ -598,7 +609,7 @@ export function PassengerMapPage() {
       {selected && <article className="driver-map-sheet">
         <span className="driver-map-grip" />
         <div className="driver-map-sheet-head">
-          <span className={`driver-map-car-avatar${carColor(selected.vehicle_color) ? '' : ' driver-map-car-avatar-unknown'}`} style={{ '--car-body': carColor(selected.vehicle_color) ?? '' } as React.CSSProperties}>{CAR_GLYPH}</span>
+          <span className={`driver-map-car-avatar${carColor(selected.vehicle_color) ? '' : ' driver-map-car-avatar-unknown'}`} style={{ '--car-body': carColor(selected.vehicle_color) ?? '' } as React.CSSProperties}><CarGlyph /></span>
           <div className="driver-map-sheet-who">
             <strong>{selected.driver_name}</strong>
             <small>{selected.driver_username ? `@${selected.driver_username}` : `YO‘LOV #${selected.id}`}{selected.driver_rating ? ` · ★ ${selected.driver_rating}` : ''}</small>
