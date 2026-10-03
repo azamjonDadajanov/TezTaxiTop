@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, CalendarClock, CarFront, CircleAlert, MapPin, Plus, RefreshCw, Search, UsersRound } from 'lucide-react'
 import { api, dateTime, endpointLabel, money, readableError, toArray, type ApiItem, type Order, type PassengerRequest, type RoutePointInput, type Trip, type Vehicle } from '../api'
@@ -114,7 +114,41 @@ export function RequestsPage() {
   </>
 }
 
-type Match = ApiItem & { trip_id?: number; route?: string; departure_time?: string; price_per_seat?: number | string; available_seats?: number; driver_name?: string; driver_rating?: string; score?: string; rank?: number; reasons?: string[] }
+type Match = ApiItem & {
+  trip_id?: number
+  request_id?: number
+  route?: string
+  pickup_location?: string
+  dropoff_location?: string
+  departure_time?: string
+  price_per_seat?: number | string
+  available_seats?: number
+  required_seats?: number
+  driver_name?: string
+  passenger_name?: string
+  distance_difference_km?: number | null
+  route_deviation_km?: number | null
+  time_difference_minutes?: number
+  score?: string
+  rank?: number
+  reasons?: string[]
+}
+
+/** The trip route as the API labels it (``"A → B"``), split for the route line. */
+function routeEnds(route?: string) {
+  const [from, to] = (route || '').split(' → ')
+  return { from, to }
+}
+
+/** A distance the backend could not measure stays unknown instead of being
+ *  shown as a measured zero. */
+function kilometres(value?: number | null) {
+  return value == null ? '—' : `${value.toFixed(1)} km`
+}
+
+function MatchMetric({ value, label }: { value: ReactNode; label: string }) {
+  return <span><b>{value}</b><small>{label}</small></span>
+}
 
 export function MatchingPage() {
   const mode = useRoleMode()
@@ -122,8 +156,14 @@ export function MatchingPage() {
   const passenger = mode === 'passenger'
   const requests = useQuery({ queryKey: ['my-requests'], queryFn: async () => toArray((await api.get<PassengerRequest[] | { results: PassengerRequest[] }>('/rides/requests/')).data), enabled: passenger })
   const trips = useQuery({ queryKey: ['my-trips'], queryFn: async () => toArray((await api.get<Trip[] | { results: Trip[] }>('/rides/trips/my_trips/')).data), enabled: !passenger })
-  const [selected, setSelected] = useState('')
+  const [chosen, setChosen] = useState('')
   const [notice, setNotice] = useState('')
+  const choices = useMemo(() => (passenger ? requests.data ?? [] : trips.data ?? []), [passenger, requests.data, trips.data])
+  // Nothing to choose on this screen: the first trip (or request) is the one
+  // shown, so the matching list is on the screen the moment the page opens.
+  // An explicit choice is kept until it disappears from the list.
+  const fallback = choices[0]?.id != null ? String(choices[0].id) : ''
+  const selected = chosen && choices.some((item) => String(item.id) === chosen) ? chosen : fallback
   const matches = useQuery({ queryKey: ['matching', passenger, selected], enabled: Boolean(selected), queryFn: async () => {
     const url = passenger ? `/matching/requests/${selected}/trips/` : `/matching/trips/${selected}/requests/`
     const { data } = await api.get<{ results?: Match[] } | Match[]>(url)
@@ -134,11 +174,44 @@ export function MatchingPage() {
     const request = requests.data?.find((item) => item.id === Number(selected))
     return api.post('/orders/orders/', { trip: tripId, seats_booked: request?.passenger_count ?? 1 })
   }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['my-orders'] }); setNotice('Buyurtma haydovchiga yuborildi.') }, onError: (cause) => setNotice(readableError(cause)) })
-  const choices = passenger ? requests.data ?? [] : trips.data ?? []
+  const list = matches.data ?? []
+  const loading = !selected || matches.isLoading || (matches.isFetching && !matches.data)
+  const failure = matches.error ? readableError(matches.error) : undefined
   return <>
-    <PageHeading eyebrow="MOSLASHTIRISH" title={passenger ? 'Sizga mos safarlar' : 'Mos yo‘lovchi so‘rovlari'} description="Moslik reytingi serverda hisoblanadi. Natija va sabablari o‘zgartirilmay ko‘rsatiladi." />
-    <section className="form-section match-picker"><label>{passenger ? 'So‘rovni tanlang' : 'Yo‘lovni tanlang'}<select value={selected} onChange={(event) => setSelected(event.target.value)}><option value="">Tanlang</option>{choices.map((item) => <option key={item.id} value={item.id}>{passenger ? `So‘rov #${item.id}` : `Yo‘lov #${item.id}`} · {endpointLabel(item.origin, item.from_location_detail) || item.status}</option>)}</select></label>{passenger && <button className="button button-outline button-small" disabled={!selected || refresh.isPending} onClick={() => refresh.mutate()}><RefreshCw size={15} />Qayta qidirish</button>}</section>
+    <PageHeading eyebrow="MOSLASHTIRISH" title={passenger ? 'Sizga mos safarlar' : 'Mos yo‘lovchi so‘rovlari'} description="Moslik serverda hisoblanadi: yo‘nalish (25 km), chuqish vaqti (±1 soat) va bo‘sh o‘rinlar. Ro‘yxat ochilishi bilan eng mos variant tanlanadi." />
+    <section className="form-section match-picker">
+      <label>{passenger ? 'So‘rov' : 'Yo‘lov'}
+        <select value={selected} onChange={(event) => setChosen(event.target.value)}>
+          {choices.length === 0 && <option value="">Hozircha yo‘q</option>}
+          {choices.map((item) => <option key={item.id} value={item.id}>{passenger ? `So‘rov #${item.id}` : `Yo‘lov #${item.id}`} · {endpointLabel(item.origin, item.from_location_detail) || item.status}</option>)}
+        </select>
+      </label>
+      {passenger && <button className="button button-outline button-small" disabled={!selected || refresh.isPending} onClick={() => refresh.mutate()}><RefreshCw size={15} />Qayta qidirish</button>}
+    </section>
     {notice && <FormNotice message={notice} />}
-    {!selected ? <EmptyState icon={Search} title="Yo‘nalishni tanlang" description={passenger ? 'Mos haydovchilarni ko‘rish uchun avval faol so‘rovni tanlang.' : 'Mos yo‘lovchilarni ko‘rish uchun e’lon qilingan yo‘lovni tanlang.'} /> : <ContentState loading={matches.isLoading} error={matches.error ? readableError(matches.error) : undefined} empty={matches.data?.length === 0} onRetry={() => void matches.refetch()}><div className="record-list">{matches.data?.map((match) => <article className="record-card match-card" key={match.id}><div className="record-top"><span className="record-id">MOSLIK {match.rank ? `#${match.rank}` : `#${match.id}`}</span><span className="score-pill">{match.score ?? '—'} ball</span></div><RouteLine from={match.route?.split(' → ')[0]} to={match.route?.split(' → ')[1]} /><div className="record-detail-grid"><span><CalendarClock size={15} />{dateTime(match.departure_time)}</span><span><UsersRound size={15} />{match.available_seats ?? 0} ta bo‘sh o‘rin · {match.driver_name || 'Yo‘lovchi'}</span><strong>{money(match.price_per_seat)}</strong></div>{match.reasons && <div className="match-reasons">{match.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}{passenger && match.trip_id && <button className="button button-dark button-small" onClick={() => order.mutate(match.trip_id!)} disabled={order.isPending || !match.available_seats}>Buyurtma yuborish <ArrowRight size={15} /></button>}</article>)}</div></ContentState>}
+    {choices.length === 0
+      ? <EmptyState icon={Search} title={passenger ? 'Faol so‘rov yo‘q' : 'Yo‘lov yo‘q'} description={passenger ? 'Mos safarlarni ko‘rish uchun avval yo‘nalishni belgilagan so‘rov yarating.' : 'Mos yo‘lovchilarni ko‘rish uchun avval yo‘lov e’lon qiling.'} />
+      : <ContentState loading={loading} error={failure} empty={false} onRetry={() => void matches.refetch()}>
+          {list.length === 0
+            ? <EmptyState icon={Search} title={passenger ? 'Bu so‘rov uchun mos safarlar topilmadi.' : 'Bu safar uchun mos yo‘lovchilar topilmadi.'} description="Yo‘nalish, chuqish vaqti yoki bo‘sh o‘rinlar bo‘yicha mos variant topilmadi." />
+            : <div className="record-list">{list.map((match) => <article className="record-card match-card" key={match.request_id ?? match.trip_id ?? match.id}>
+                <div className="record-top"><span className="record-id">MOSLIK {match.rank ? `#${match.rank}` : ''}</span><span className="score-pill">{match.score ?? '—'} ball</span></div>
+                <RouteLine from={routeEnds(match.route).from} to={routeEnds(match.route).to} />
+                {!passenger && <div className="match-counterparty"><UsersRound size={15} /><span><strong>{match.passenger_name || 'Yo‘lovchi'}</strong> · {match.pickup_location || 'Manzil'} → {match.dropoff_location || 'Manzil'} · {match.required_seats ?? 1} yo‘lovchi</span></div>}
+                <div className="record-detail-grid">
+                  <span><CalendarClock size={15} />{dateTime(match.departure_time)}</span>
+                  <span><UsersRound size={15} />{passenger ? `${match.available_seats ?? 0} ta bo‘sh o‘rin · ${match.driver_name || 'Yo‘lovchi'}` : `${match.available_seats ?? 0} ta bo‘sh o‘rin`}</span>
+                  <strong>{money(match.price_per_seat)}</strong>
+                </div>
+                <div className="match-metrics">
+                  <MatchMetric value={kilometres(match.distance_difference_km)} label="Yo‘nalish farqi" />
+                  <MatchMetric value={`${match.time_difference_minutes ?? 0} daqiqa`} label="Chuqish farqi" />
+                  <MatchMetric value={kilometres(match.route_deviation_km)} label="Qo‘shimcha masofa" />
+                  <MatchMetric value={`${match.required_seats ?? 1} / ${match.available_seats ?? 0}`} label="Kerakli / bo‘sh o‘rin" />
+                </div>
+                {match.reasons && match.reasons.length > 0 && <div className="match-reasons">{match.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
+                {passenger && match.trip_id && <div className="record-actions"><button className="button button-dark button-small" onClick={() => order.mutate(match.trip_id!)} disabled={order.isPending || !match.available_seats}>Buyurtma yuborish <ArrowRight size={15} /></button></div>}
+              </article>)}</div>}
+        </ContentState>}
   </>
 }

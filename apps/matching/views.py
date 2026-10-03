@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core import conf
 from apps.matching import selectors as matching_selectors
 from apps.matching import services as matching_services
 from apps.matching.serializers import (
@@ -96,14 +97,24 @@ class RequestTripsRankingView(APIView):
 
 
 class TripRequestsRankingView(APIView):
-    """``GET /api/v1/matching/trips/<trip_id>/requests/`` - ranked requests."""
+    """``GET /api/v1/matching/trips/<trip_id>/requests/`` - ranked requests.
+
+    This is what the "suitable trips" screen calls the moment it opens, so it
+    computes the ranking live: the caller never has to pick a passenger (or
+    press a button) first, and the answer always reflects the current seats,
+    clocks and coordinates.
+    """
 
     permission_classes = [IsAuthenticated]
     serializer_class = RankedRequestsResponseSerializer
 
     @extend_schema(
         summary="Yo'lov uchun mos so'rovlar (Reyting bo'yicha)",
-        description="Haydovchi o'z yo'lovi bo'yicha mos so'rovlarni ball kamayish tartibida oladi.",
+        description=(
+            "Haydovchi o'z yo'lovi bo'yicha mos so'rovlarni ball kamayish tartibida oladi. "
+            "Yo'nalish (geografik), vaqt (±1 soat) va o'rinlar bo'yicha qatiy filtrlar "
+            "serverda qo'llanadi; natija darhol hisoblanadi."
+        ),
         responses={200: RankedRequestsResponseSerializer},
     )
     def get(self, request, trip_id: int) -> Response:
@@ -117,14 +128,14 @@ class TripRequestsRankingView(APIView):
             if driver is None or driver.pk != trip.driver_id:
                 raise PermissionDenied("Bu yo'lovga kirish huquqingiz yo'q.")
 
-        matches = matching_selectors.get_match_queryset().filter(trip=trip).order_by(
-            "-score", "request__departure_from"
-        )
+        matches = matching_services.get_ranked_matches_for_trip(trip)
         return Response(
             {
                 "trip_id": trip.pk,
                 "max_score": str(matching_services.MAX_SCORE),
-                "results": TripMatchSerializer(matches, many=True, context={"request": request}).data,
+                "results": TripMatchSerializer(
+                    matches[: conf.MATCHING_MAX_RESULTS], many=True, context={"request": request}
+                ).data,
             }
         )
 

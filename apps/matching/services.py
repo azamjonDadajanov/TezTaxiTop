@@ -1,15 +1,26 @@
 """The deterministic matching engine.
 
-Two entry points:
+Entry points:
 
-``find_matching_trips(request)``
-    Driver side: "which passenger requests should I answer?" and, for a given
-    request, the ranked list of the *other* trips. Returns ``TripMatch`` rows.
+``rank_trips_for_request(request)`` / ``get_ranked_matches(request)``
+    Passenger side: which trips fit one request, best first.
+
+``rank_requests_for_trip(trip)`` / ``get_ranked_matches_for_trip(trip)``
+    Driver side: which passenger requests fit one trip - the list the
+    "suitable trips" screen renders without asking the user to pick anything.
 
 ``score_trip_for_request(trip, request)``
-    Pure scoring function - no database writes. Given a trip and a request it
-    returns the component scores and the total, or ``None`` when one of the hard
-    filters rejects the pair.
+    Pure scoring function - no database writes. Given a pair it returns the
+    component scores and the total, or an ``excluded`` reason when one of the
+    hard filters rejects the pair.
+
+A pair must clear four hard filters before it is ranked (see
+:func:`exclusion_reason`): the routes must be *geographically* compatible
+(same direction, every corresponding point within
+``MATCHING_MAX_ROUTE_DISTANCE_KM``), the departure must be within
+``MATCHING_TIME_TOLERANCE_MINUTES`` of the requested window, the party must
+fit into the free seats, and the trip must still be bookable, verified,
+subscribed and inside the budget.
 
 Every weight is a module constant so the algorithm is auditable in one screen.
 """
@@ -26,6 +37,7 @@ from django.utils import timezone
 
 from apps.core import conf
 from apps.core.exceptions import ResourceNotFound
+from apps.matching import compatibility
 from apps.matching.models import MatchReason, TripMatch
 from apps.matching.selectors import get_best_matches_for_request
 from apps.rides import selectors as ride_selectors
@@ -165,13 +177,55 @@ def _vehicle_component(trip: DriverTrip) -> Decimal:
 # ---------------------------------------------------------------------------
 # Hard filters
 # ---------------------------------------------------------------------------
+def route_exclusion_reason(trip: DriverTrip, request: PassengerRequest) -> str:
+    """Why these two routes cannot be served together, or ``""``.
+
+    The geographic rule (same direction, every corresponding point within
+    ``MATCHING_MAX_ROUTE_DISTANCE_KM``) decides whenever all four points are
+    known. Rows that carry no coordinates - anything written before the
+    endpoint snapshots existed - fall back to the catalogue / city identity,
+    which is the rule the platform used before coordinates were compared:
+    never a guess, and never a place-name comparison of two free-text values.
+    """
+    measured = compatibility.route_compatibility(trip, request)
+    if measured.reason != "missing_coordinates":
+        return "" if measured.compatible else measured.reason
+    if _same_route_identity(trip, request) or _same_route_identity(request, trip):
+        return ""
+    return "route_not_comparable"
+
+
+def _same_route_identity(left, right) -> bool:
+    """The pre-geocoding route rule: same catalogue pair, else same city pair."""
+    if left.from_location_id and left.to_location_id:
+        return (left.from_location_id, left.to_location_id) == (
+            right.from_location_id,
+            right.to_location_id,
+        )
+    if left.from_city_name and left.to_city_name:
+        return (left.from_city_name, left.to_city_name) == (
+            right.from_city_name,
+            right.to_city_name,
+        )
+    return False
+
+
 def exclusion_reason(trip: DriverTrip, request: PassengerRequest) -> str:
-    """Return a machine readable reason why this pair must not be shown."""
+    """Return a machine readable reason why this pair must not be shown.
+
+    The four criteria of the "suitable trips" screen, in order: the routes
+    must fit together geographically, the departure must be within the time
+    tolerance of the requested window, the party must fit into the free
+    seats, and the trip must still be bookable and inside the budget.
+    """
     if not trip.accepts_new_orders:
         return "trip_not_bookable"
     if trip.available_seats < request.passenger_count:
         return "not_enough_seats"
-    if trip.departure_time < request.departure_from or trip.departure_time > request.departure_until:
+    route_reason = route_exclusion_reason(trip, request)
+    if route_reason:
+        return route_reason
+    if not compatibility.time_is_compatible(trip.departure_time, request):
         return "outside_departure_window"
     if request.max_price_per_seat is not None and trip.price_per_seat > request.max_price_per_seat:
         return "above_budget"
@@ -253,19 +307,41 @@ def _explain(score: MatchScore) -> list[str]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def _time_tolerance() -> timedelta:
+    """Query padding around the configured time tolerance.
+
+    The hard filter floors a difference to whole minutes, so a pair that sits
+    60.9 minutes apart passes it; the query must fetch that pair instead of
+    cutting it off a fraction early. The exact decision is always
+    :func:`compatibility.time_difference_minutes`.
+    """
+    return timedelta(minutes=conf.MATCHING_TIME_TOLERANCE_MINUTES + 1)
+
+
 def get_candidate_trips(request: PassengerRequest) -> list[DriverTrip]:
-    """Hard-filtered candidate set, cheapest-first only for readability."""
+    """Hard-filtered candidate set, cheapest-first only for readability.
+
+    The query only narrows the search (route bounding box, seat count, padded
+    departure window); every survivor is then run through
+    :func:`exclusion_reason`, which is the rule the API and the tests trust.
+    """
+    origin, destination = compatibility.route_points(request)
+    tolerance = _time_tolerance()
     queryset = ride_selectors.get_trip_candidates_for_matching(
-        from_location_id=request.from_location_id,
-        to_location_id=request.to_location_id,
+        origin=origin,
+        destination=destination,
         seats=request.passenger_count,
-        not_before=request.departure_from,
-        from_city_name=request.from_city_name,
-        to_city_name=request.to_city_name,
+        window_start=request.departure_from - tolerance,
+        window_end=request.departure_until + tolerance,
+        fallback_route_filter=ride_selectors.build_route_filter(
+            from_location_id=request.from_location_id,
+            to_location_id=request.to_location_id,
+            from_city_name=request.from_city_name,
+            to_city_name=request.to_city_name,
+        ),
     )
-    return list(
-        queryset.filter(departure_time__lte=request.departure_until).order_by("departure_time", "price_per_seat")
-    )
+    candidates = list(queryset.order_by("departure_time", "price_per_seat", "pk"))
+    return [trip for trip in candidates if exclusion_reason(trip, request) == ""]
 
 
 def rank_trips_for_request(request: PassengerRequest) -> list[tuple[DriverTrip, MatchScore]]:
@@ -291,6 +367,52 @@ def _sort_key(trip: DriverTrip, score: MatchScore) -> tuple:
         -Decimal(str(trip.driver.rating or 0)),
         trip.pk,
     )
+
+
+def get_candidate_requests(trip: DriverTrip) -> list[PassengerRequest]:
+    """Passenger requests one trip could serve, hard-filtered.
+
+    The mirror of :func:`get_candidate_trips`: route geometry, seat capacity
+    and the padded departure window narrow the query, and every survivor is
+    judged by :func:`exclusion_reason` before it can reach the UI.
+    """
+    origin, destination = compatibility.route_points(trip)
+    tolerance = _time_tolerance()
+    queryset = ride_selectors.get_request_candidates_for_matching(
+        origin=origin,
+        destination=destination,
+        seats=trip.available_seats,
+        window_start=trip.departure_time - tolerance,
+        window_end=trip.departure_time + tolerance,
+        fallback_route_filter=ride_selectors.build_route_filter(
+            from_location_id=trip.from_location_id,
+            to_location_id=trip.to_location_id,
+            from_city_name=trip.from_city_name,
+            to_city_name=trip.to_city_name,
+        ),
+    )
+    candidates = list(queryset.order_by("departure_from", "pk"))
+    return [passenger_request for passenger_request in candidates if exclusion_reason(trip, passenger_request) == ""]
+
+
+def rank_requests_for_trip(trip: DriverTrip) -> list[tuple[PassengerRequest, MatchScore]]:
+    """Deterministic ranking of every candidate request for one trip.
+
+    Same scorer, same weights and the same tie-break rules as
+    :func:`rank_trips_for_request` - only the direction changes, so a pair
+    scores identically whether the driver or the passenger asks about it.
+    """
+    scored: list[tuple[PassengerRequest, MatchScore]] = []
+    for passenger_request in get_candidate_requests(trip):
+        score = score_trip_for_request(trip, passenger_request)
+        if score.is_match:
+            scored.append((passenger_request, score))
+    return sorted(scored, key=lambda item: _request_sort_key(item[0], item[1]))
+
+
+def _request_sort_key(passenger_request: PassengerRequest, score: MatchScore) -> tuple:
+    """Score desc, window start asc, id asc - a total order, always reproducible."""
+    return (-score.total, passenger_request.departure_from, passenger_request.pk)
 
 
 @transaction.atomic
@@ -336,25 +458,35 @@ def refresh_matches_for_request(
 
 @transaction.atomic
 def refresh_matches_for_trip(trip: DriverTrip, *, reason: str = MatchReason.NEW_MATCH) -> list[TripMatch]:
-    """Recompute the ranking of the trip against every active request."""
-    route_filter = ride_selectors.build_route_filter(
-        from_location_id=trip.from_location_id,
-        to_location_id=trip.to_location_id,
-        from_city_name=trip.from_city_name,
-        to_city_name=trip.to_city_name,
-    )
-    if route_filter is None:
-        return []
+    """Recompute the ranking of the trip against every active request.
 
-    requests = ride_selectors.get_matchable_requests().filter(
-        route_filter,
-        departure_from__lte=trip.departure_time,
-        departure_until__gte=trip.departure_time,
-    )
-    if trip.price_per_seat is not None:
-        requests = requests.filter(max_price_per_seat__isnull=True) | requests.filter(
-            max_price_per_seat__gte=trip.price_per_seat
+    The candidate query is :func:`get_candidate_trips` seen from the other
+    side: the route bounding box (plus the catalogue identity for rows
+    without coordinates), the departure window padded by the time tolerance
+    around *the trip's* departure, and a party that fits into the free seats.
+    Each surviving request is then judged pair by pair, so a request can only
+    appear here when :func:`exclusion_reason` has nothing to object to.
+    """
+    origin, destination = compatibility.route_points(trip)
+    tolerance = _time_tolerance()
+    requests = (
+        ride_selectors.get_request_candidates_for_matching(
+            origin=origin,
+            destination=destination,
+            seats=trip.available_seats,
+            window_start=trip.departure_time - tolerance,
+            window_end=trip.departure_time + tolerance,
+            fallback_route_filter=ride_selectors.build_route_filter(
+                from_location_id=trip.from_location_id,
+                to_location_id=trip.to_location_id,
+                from_city_name=trip.from_city_name,
+                to_city_name=trip.to_city_name,
+            ),
         )
+        # A total order, so two runs against the same rows produce the same
+        # ranking even when their departure windows are identical.
+        .order_by("departure_from", "pk")
+    )
 
     all_matches: list[TripMatch] = []
     for request in requests.distinct():
@@ -395,6 +527,45 @@ def get_ranked_matches(request: PassengerRequest) -> list[TripMatch]:
     return refresh_matches_for_request(request)
 
 
+def _live_match(
+    passenger_request: PassengerRequest, trip: DriverTrip, score: MatchScore, rank: int
+) -> TripMatch:
+    """A ranking row that is **not** written to the database.
+
+    Same shape as a persisted :class:`TripMatch`, so the API serialises one
+    payload either way; it simply has no primary key until somebody asks for
+    the ranking to be stored (``refresh_matches_for_trip``).
+    """
+    return TripMatch(
+        request=passenger_request,
+        trip=trip,
+        score=score.total,
+        time_score=score.time_score,
+        price_score=score.price_score,
+        rating_score=score.rating_score,
+        subscription_score=score.subscription_score,
+        vehicle_score=score.vehicle_score,
+        minutes_difference=score.minutes_difference,
+        price_difference=score.price_difference,
+        rank=rank,
+    )
+
+
+def get_ranked_matches_for_trip(trip: DriverTrip) -> list[TripMatch]:
+    """Live ranking of one trip against every compatible passenger request.
+
+    The driver's "suitable trips" screen reads this on every open. It is
+    deliberately read-only: a page load must not rewrite rows, and in
+    particular must not overwrite the request-side ``rank`` of matches the
+    passenger side still orders by. The ranking is a pure function of the
+    stored trips and requests, so recomputing it always yields the same list.
+    """
+    return [
+        _live_match(passenger_request, trip, score, rank)
+        for rank, (passenger_request, score) in enumerate(rank_requests_for_trip(trip), start=1)
+    ]
+
+
 def refresh_all_active_matches() -> dict:
     """Used by the periodic Celery task; safe to run repeatedly."""
     requests = ride_selectors.get_matchable_requests().filter(
@@ -417,12 +588,16 @@ __all__ = [
     "MAX_SCORE",
     "MatchScore",
     "exclusion_reason",
+    "get_candidate_requests",
     "get_candidate_trips",
     "get_ranked_matches",
+    "get_ranked_matches_for_trip",
     "get_required_request",
+    "rank_requests_for_trip",
     "rank_trips_for_request",
     "refresh_all_active_matches",
     "refresh_matches_for_request",
     "refresh_matches_for_trip",
+    "route_exclusion_reason",
     "score_trip_for_request",
 ]

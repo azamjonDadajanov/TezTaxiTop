@@ -40,6 +40,18 @@ MATCHING_TIME_WINDOW_HOURS: int = getattr(settings, "MATCHING_TIME_WINDOW_HOURS"
 #: Upper bound of trips returned by `matching.services.find_matching_trips`.
 MATCHING_MAX_RESULTS: int = getattr(settings, "MATCHING_MAX_RESULTS", 20)
 
+#: Hard filter: the largest geographic difference (km) allowed between the
+#: corresponding pickup / drop-off points of two routes.
+MATCHING_MAX_ROUTE_DISTANCE_KM: float = float(
+    getattr(settings, "MATCHING_MAX_ROUTE_DISTANCE_KM", 25)
+)
+
+#: Hard filter: how far (minutes) the trip departure may sit outside the
+#: requested departure window and still count as a time match.
+MATCHING_TIME_TOLERANCE_MINUTES: int = getattr(
+    settings, "MATCHING_TIME_TOLERANCE_MINUTES", 60
+)
+
 # --- Driver map -------------------------------------------------------------
 
 #: Default radius (km) of the "passengers near me" map feed.

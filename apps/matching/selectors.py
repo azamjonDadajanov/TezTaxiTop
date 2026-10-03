@@ -8,7 +8,23 @@ from apps.matching.models import TripMatch
 
 
 def get_match_queryset() -> QuerySet[TripMatch]:
-    return TripMatch.objects.select_related("request", "trip", "trip__driver__user", "trip__vehicle")
+    """Both halves of the pair in one query.
+
+    The API renders the passenger's name and route next to the trip's, so the
+    passenger, both route endpoints and the vehicle all arrive with the row -
+    serialising a page of matches must not turn into one query per match.
+    """
+    return TripMatch.objects.select_related(
+        "request",
+        "request__passenger",
+        "request__from_location",
+        "request__to_location",
+        "trip",
+        "trip__driver__user",
+        "trip__vehicle",
+        "trip__from_location",
+        "trip__to_location",
+    )
 
 
 def get_matches_for_request(request) -> QuerySet[TripMatch]:

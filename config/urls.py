@@ -34,7 +34,13 @@ api_v1_patterns = [
     path("chat/", include("apps.chat.urls")),
     path("notifications/", include("apps.notifications.urls")),
     path("support/", include("apps.support.urls")),
-    path("matching/", include("apps.matching.urls")),
+    # This app owns its own prefix: its ``urls.py`` already declares
+    # ``matching/...`` (and the router registers ``matching/trip-requests``),
+    # so it is mounted at the root like ``apps.users.urls``. Mounting it under
+    # another ``matching/`` would put every route behind a doubled
+    # ``/api/v1/matching/matching/...`` that neither the frontend nor the
+    # documented endpoints call.
+    path("", include("apps.matching.urls")),
 ]
 
 urlpatterns = [

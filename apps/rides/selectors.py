@@ -185,45 +185,128 @@ def build_route_filter(
     return None
 
 
+def _point_bbox_filter(prefix: str, point: Sequence, radius_km: float) -> Q:
+    """Range filter covering ``radius_km`` around one ``(lat, lng)`` endpoint.
+
+    The circle is approximated by its bounding box, so the pre-filter stays a
+    plain range query on any backend while still being a *superset* of the
+    circle: every pair the great-circle test in the matcher accepts is already
+    inside these ranges, and the exact test afterwards decides the match.
+
+    Both halves of an endpoint are probed - the snapshot columns *and* the
+    linked catalogue row - because :func:`apps.matching.compatibility.endpoint_point`
+    resolves an endpoint the same way, catalogue first. A row that carries
+    only one of the two must not be dropped before it was ever measured.
+    """
+    min_latitude, max_latitude, min_longitude, max_longitude = bounding_box(
+        point[0], point[1], radius_km
+    )
+    snapshot = Q(
+        **{
+            f"{prefix}_latitude__gte": min_latitude,
+            f"{prefix}_latitude__lte": max_latitude,
+            f"{prefix}_longitude__gte": min_longitude,
+            f"{prefix}_longitude__lte": max_longitude,
+        }
+    )
+    catalogue = Q(
+        **{
+            f"{prefix}_location__latitude__gte": min_latitude,
+            f"{prefix}_location__latitude__lte": max_latitude,
+            f"{prefix}_location__longitude__gte": min_longitude,
+            f"{prefix}_location__longitude__lte": max_longitude,
+        }
+    )
+    return snapshot | catalogue
+
+
+def _route_prefilter(
+    queryset: QuerySet,
+    *,
+    origin: Sequence | None,
+    destination: Sequence | None,
+    fallback_route_filter: Q | None,
+) -> QuerySet:
+    """Attach the geographic (or, failing that, identity) route predicate.
+
+    When both endpoints are known the bounding box decides; the catalogue /
+    city-name identity filter is OR-ed in because a row without coordinates
+    would fail every range comparison, and identity is the only rule left to
+    judge it. The caller still re-checks each surviving row with the exact
+    great-circle rule, so this predicate only has to be a superset.
+    """
+    from apps.core import conf
+
+    if origin is None or destination is None:
+        if fallback_route_filter is None:
+            return queryset.none()
+        return queryset.filter(fallback_route_filter)
+
+    radius_km = float(conf.MATCHING_MAX_ROUTE_DISTANCE_KM)
+    point_filter = _point_bbox_filter("from", origin, radius_km) & _point_bbox_filter(
+        "to", destination, radius_km
+    )
+    if fallback_route_filter is None:
+        return queryset.filter(point_filter)
+    return queryset.filter(point_filter | fallback_route_filter)
+
+
 def get_trip_candidates_for_matching(
     *,
-    from_location_id: int | None,
-    to_location_id: int | None,
+    origin: Sequence | None,
+    destination: Sequence | None,
     seats: int,
-    not_before: datetime,
-    from_city_name: str = "",
-    to_city_name: str = "",
+    window_start: datetime,
+    window_end: datetime,
+    fallback_route_filter: Q | None = None,
 ) -> QuerySet[DriverTrip]:
     """Pre-filtered candidate set handed to the deterministic scorer.
 
     Hard filters (things that make a trip *unusable* rather than *less good*):
 
     * the trip must be bookable (active + free seats),
-    * it must depart after ``not_before`` minus the grace period,
-    * it must have at least ``seats`` free seats.
+    * it must have at least ``seats`` free seats,
+    * it must depart inside ``[window_start, window_end]`` - the caller pads
+      the requested window with the configured time tolerance,
+    * both endpoints must sit within ``MATCHING_MAX_ROUTE_DISTANCE_KM`` of the
+      given points (see :func:`_route_prefilter` for why the identity filter
+      comes along).
 
-    See :func:`build_route_filter` for why the route is matched on either the
-    catalogue FKs or the snapshot city names.
+    The geometry is only a pre-filter: :func:`apps.matching.services.exclusion_reason`
+    measures every surviving pair exactly before it is shown to anybody.
     """
-    from apps.core import conf
-
-    route_filter = build_route_filter(
-        from_location_id=from_location_id,
-        to_location_id=to_location_id,
-        from_city_name=from_city_name,
-        to_city_name=to_city_name,
+    queryset = _route_prefilter(
+        get_trip_queryset().bookable().with_seats(seats),
+        origin=origin,
+        destination=destination,
+        fallback_route_filter=fallback_route_filter,
     )
-    if route_filter is None:
-        return get_trip_queryset().none()
+    return queryset.filter(departure_time__gte=window_start, departure_time__lte=window_end)
 
-    grace = timedelta(minutes=conf.TRIP_DEPARTURE_GRACE_MINUTES)
-    return (
-        get_trip_queryset()
-        .bookable()
-        .with_seats(seats)
-        .filter(departure_time__gte=not_before - grace)
-        .filter(route_filter)
+
+def get_request_candidates_for_matching(
+    *,
+    origin: Sequence | None,
+    destination: Sequence | None,
+    seats: int,
+    window_start: datetime,
+    window_end: datetime,
+    fallback_route_filter: Q | None = None,
+) -> QuerySet[PassengerRequest]:
+    """Active requests a trip of ``seats`` free seats could serve.
+
+    The mirror image of :func:`get_trip_candidates_for_matching`: the request
+    window must *overlap* ``[window_start, window_end]`` (that is exactly
+    "the trip departure is within the tolerance of both requested times"),
+    and the party must fit into the free seats.
+    """
+    queryset = _route_prefilter(
+        get_matchable_requests().filter(passenger_count__lte=seats),
+        origin=origin,
+        destination=destination,
+        fallback_route_filter=fallback_route_filter,
     )
+    return queryset.filter(departure_from__lte=window_end, departure_until__gte=window_start)
 
 
 def get_trips_with_driver_subscriptions() -> QuerySet[DriverTrip]:

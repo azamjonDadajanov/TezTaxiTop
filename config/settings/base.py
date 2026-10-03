@@ -369,6 +369,12 @@ PASSENGER_REQUEST_EXPIRY_HOURS = int(os.environ.get("PASSENGER_REQUEST_EXPIRY_HO
 TRIP_DEPARTURE_GRACE_MINUTES = int(os.environ.get("TRIP_DEPARTURE_GRACE_MINUTES", "60"))
 MATCHING_TIME_WINDOW_HOURS = int(os.environ.get("MATCHING_TIME_WINDOW_HOURS", "6"))
 MATCHING_MAX_RESULTS = int(os.environ.get("MATCHING_MAX_RESULTS", "20"))
+# A pair is only route compatible when every corresponding point (pickup and
+# drop-off) sits within this many kilometres of the other route's point.
+MATCHING_MAX_ROUTE_DISTANCE_KM = env_int("MATCHING_MAX_ROUTE_DISTANCE_KM", 25)
+# The trip departure and the requested departure window may differ by at most
+# this many minutes on either end of the window.
+MATCHING_TIME_TOLERANCE_MINUTES = env_int("MATCHING_TIME_TOLERANCE_MINUTES", 60)
 
 # --- Driver map -------------------------------------------------------------
 # How far the "passengers near me" map reaches when the client does not ask for a
