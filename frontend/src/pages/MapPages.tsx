@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Armchair, CalendarClock, CarTaxiFront, Compass, Crosshair, Navigation, RefreshCw, Route, UserRound, UsersRound, X, ZoomIn } from 'lucide-react'
-import { api, dateTime, endpointLabel, money, readableError, type NearbyRequests, type NearbyTrips, type RouteEndpoint } from '../api'
+import { Armchair, CalendarClock, CarTaxiFront, CheckCircle2, CircleAlert, Compass, Crosshair, MessageCircle, Navigation, RefreshCw, Route, TicketCheck, UserRound, UsersRound, X, ZoomIn } from 'lucide-react'
+import { api, createBooking, dateTime, endpointLabel, money, openChat, readableError, type NearbyRequests, type NearbyTrips, type RouteEndpoint } from '../api'
 import { PageHeading, RouteLine, StatusBadge } from '../components/ui'
 import { RouteActionButtons } from '../components/TripActionCard'
 
@@ -134,6 +135,91 @@ function useDriverPosition() {
 /** The passenger's own position, cached separately from the driver's. */
 function usePassengerPosition() {
   return useViewerPosition(TAXI_POSITION_KEY)
+}
+
+/** What the sheet says back after an action: a green line on success, a red one
+ *  when the server refused. */
+type SheetFeedback = { type: 'success' | 'error'; message: string }
+
+function SheetFeedbackLine({ feedback }: { feedback: SheetFeedback | null }) {
+  if (!feedback) return null
+  return feedback.type === 'success'
+    ? <p className="notice notice-success inline-feedback"><CheckCircle2 size={15} /><span>{feedback.message}</span></p>
+    : <p className="inline-error inline-feedback"><CircleAlert size={15} /><span>{feedback.message}</span></p>
+}
+
+/** Backs the "Chatni ochish" and "Bron qilish" buttons on both map sheets.
+ *
+ *  Both maps need the same two calls, and only the picked item differs: the
+ *  driver sheet works from a passenger `request_id`, the passenger sheet from a
+ *  `trip_id`. Exactly one of the two is passed, and which one it is also decides
+ *  how the request is built, so the two sheets cannot send the wrong id.
+ *
+ *  Booking is `POST /orders/orders/`: the server picks the matching trip and the
+ *  seat count, so only the id travels from the browser. Chat is
+ *  `POST /chat/chats/open/`, which hands back the order the thread hangs off, so
+ *  a driver has to name the *request* - the backend refuses a bare `trip_id` from
+ *  the driver of that trip. */
+function useSheetActions({
+  requestId,
+  tripId,
+  onChanged,
+}: {
+  requestId: number | null
+  tripId: number | null
+  onChanged?: () => void
+}) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  // The message is stamped with the item it belongs to, so a note about one
+  // passenger never lingers on the next one the user picks.
+  const [stamped, setStamped] = useState<(SheetFeedback & { forId: number }) | null>(null)
+  const currentId = requestId ?? tripId
+  const say = (type: SheetFeedback['type'], message: string) => {
+    if (currentId == null) return
+    setStamped({ type, message, forId: currentId })
+  }
+
+  // Booking takes the item off the nearby list, and opening a chat creates the
+  // order as a side effect - so both refresh the same caches.
+  const refresh = () => {
+    if (requestId != null) void queryClient.invalidateQueries({ queryKey: ['nearby-requests'] })
+    if (tripId != null) void queryClient.invalidateQueries({ queryKey: ['nearby-trips'] })
+    void queryClient.invalidateQueries({ queryKey: ['my-orders'] })
+    onChanged?.()
+  }
+
+  const openChatThread = useMutation({
+    mutationFn: async () => {
+      setStamped(null)
+      if (tripId != null) return await openChat({ trip_id: tripId })
+      if (requestId != null) return await openChat({ request_id: requestId })
+      throw new Error('Suhbat uchun tanlangan yo‘lov yoki so‘rov yo‘q.')
+    },
+    onSuccess: (response) => {
+      void queryClient.invalidateQueries({ queryKey: ['chat-threads'] })
+      refresh()
+      navigate('/chat', { state: { orderId: response.order_id } })
+    },
+    onError: (error) => say('error', readableError(error)),
+  })
+
+  const book = useMutation({
+    mutationFn: async () => {
+      setStamped(null)
+      if (tripId != null) return await createBooking({ trip: tripId, seats_booked: 1 })
+      if (requestId != null) return await createBooking({ request_id: requestId })
+      throw new Error('Bron qilish uchun tanlangan yo‘lov yoki so‘rov yo‘q.')
+    },
+    onSuccess: () => {
+      say('success', tripId != null ? 'Safar bron qilindi!' : 'So‘rov qabul qilindi!')
+      refresh()
+    },
+    onError: (error) => say('error', readableError(error)),
+  })
+
+  const feedback = stamped && stamped.forId === currentId ? stamped : null
+  return { feedback, openChatThread, book }
 }
 
 /** Keeps a Leaflet map in sync with a container CSS sizes, not Leaflet itself.
@@ -306,6 +392,8 @@ export function DriverMapPage() {
     instance.flyTo(driver, 13, { duration: 0.6 })
   }, [driver])
 
+  const sheet = useSheetActions({ requestId: selected?.id ?? null, tripId: null, onChanged: () => void nearby.refetch() })
+
 return <div className="map-page">
     <PageHeading
       eyebrow="HAYDOVCHI XARITASI"
@@ -368,9 +456,26 @@ return <div className="map-page">
         />
 
         <div className="driver-map-sheet-actions">
-          <button className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
-          <button className="button button-outline button-small" onClick={showDriver}><Crosshair size={15} />Mening joylashuvim</button>
+          <button type="button" className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
+          <button type="button" className="button button-outline button-small" onClick={showDriver}><Crosshair size={15} />Mening joylashuvim</button>
+          <button
+            type="button"
+            className="button button-outline button-small"
+            disabled={sheet.openChatThread.isPending || sheet.book.isPending}
+            onClick={() => sheet.openChatThread.mutate()}
+          >
+            <MessageCircle size={15} />{sheet.openChatThread.isPending ? 'Ochilmoqda…' : 'Chatni ochish'}
+          </button>
+          <button
+            type="button"
+            className="button button-dark button-small"
+            disabled={sheet.book.isPending || sheet.openChatThread.isPending}
+            onClick={() => sheet.book.mutate()}
+          >
+            <TicketCheck size={15} />{sheet.book.isPending ? 'Bron qilinmoqda…' : 'Bron qilish'}
+          </button>
         </div>
+        <SheetFeedbackLine feedback={sheet.feedback} />
       </article>}
     </section>
   </div>
@@ -586,6 +691,8 @@ export function PassengerMapPage() {
     instance.flyTo(viewer, 13, { duration: 0.6 })
   }, [viewer])
 
+  const sheet = useSheetActions({ requestId: null, tripId: selected?.id ?? null, onChanged: () => void nearby.refetch() })
+
   return <div className="map-page">
     <PageHeading
       eyebrow="YO‘LOVCHI XARITASI"
@@ -655,9 +762,26 @@ export function PassengerMapPage() {
         />
 
         <div className="driver-map-sheet-actions">
-          <button className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
-          <button className="button button-outline button-small" onClick={showViewer}><Crosshair size={15} />Mening joylashuvim</button>
+          <button type="button" className="button button-outline button-small" onClick={() => setFocusNonce((nonce) => nonce + 1)}><ZoomIn size={15} />Yo‘nalishni kattalashtirish</button>
+          <button type="button" className="button button-outline button-small" onClick={showViewer}><Crosshair size={15} />Mening joylashuvim</button>
+          <button
+            type="button"
+            className="button button-outline button-small"
+            disabled={sheet.openChatThread.isPending || sheet.book.isPending}
+            onClick={() => sheet.openChatThread.mutate()}
+          >
+            <MessageCircle size={15} />{sheet.openChatThread.isPending ? 'Ochilmoqda…' : 'Chatni ochish'}
+          </button>
+          <button
+            type="button"
+            className="button button-dark button-small"
+            disabled={sheet.book.isPending || sheet.openChatThread.isPending}
+            onClick={() => sheet.book.mutate()}
+          >
+            <TicketCheck size={15} />{sheet.book.isPending ? 'Bron qilinmoqda…' : 'Bron qilish'}
+          </button>
         </div>
+        <SheetFeedbackLine feedback={sheet.feedback} />
       </article>}
     </section>
   </div>
