@@ -559,12 +559,55 @@ async def show_driver_requests(message: Message, user_id: int | None = None) -> 
         await message.answer("Faol yo'lovlaringiz marshrutiga mos so'rov topilmadi.")
         return
     for request in requests:
-        await message.answer(
+        text = (
             f"<b>So'rov #{request.pk}</b> · {request.passenger_count} kishi\n"
             f"{html.escape(request.origin_display)} → {html.escape(request.destination_display)}\n"
             f"🕐 {timezone.localtime(request.departure_from):%d.%m.%Y %H:%M}\n"
-            f"Maksimal narx: {request.max_price_per_seat or 'cheklanmagan'} so'm",
-            parse_mode="HTML",
+            f"Maksimal narx: {request.max_price_per_seat or 'cheklanmagan'} so'm\n"
+            f"Haydovchi: {html.escape(request.passenger.display_name)}\n\n"
+            f"Boshlanish vaqti: {timezone.localtime(request.departure_from).strftime('%d.%m.%Y %H:%M')}\n"
+        )
+        actions = []
+        # Driver can book this passenger if there's a compatible trip
+        actions.append([InlineKeyboardButton(text="📕 Band qilish", callback_data=f"book_request:{request.pk}")])
+        actions.append([InlineKeyboardButton(text="💬 Suhbat", callback_data=f"chat_request:{request.pk}")])
+        markup = InlineKeyboardMarkup(inline_keyboard=actions)
+        await message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("book_request:"))
+async def book_request_from_driver(callback: CallbackQuery) -> None:
+    try:
+        request_id = int(callback.data.partition(":")[2])
+        order = await platform.book_driver_request(callback.from_user.id, request_id)
+    except (ValueError, BusinessError) as error:
+        text = error.message if isinstance(error, BusinessError) else "So'rov band qilishda xatolik."
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer(f"Buyurtma #{order.pk} yaratildi. Holati: {order.get_status_display()}. "
+                         "O'rinlar qabul qilgandan keyin band qilinadi.")
+    if callback.message:
+        await callback.message.edit_text(
+            f"Buyurtma #{order.pk} yaratildi. Holati: {order.get_status_display()}. "
+            "O'rinlar haydovchi qabul qilgandan keyin band qilinadi."
+        )
+
+
+@router.callback_query(F.data.startswith("chat_request:"))
+async def chat_request_from_driver(callback: CallbackQuery) -> None:
+    try:
+        request_id = int(callback.data.partition(":")[2])
+        from bot.services.platform import open_chat_for_request
+        thread, created = await open_chat_for_request(callback.from_user.id, request_id)
+    except (ValueError, BusinessError) as error:
+        text = error.message if isinstance(error, BusinessError) else "Suhbat ochilshida xatolik."
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer(f"Suhbat ochildi{' (ja\'lanib)' if not created else ''}")
+    if callback.message:
+        await callback.message.answer(
+            f"Suhbatga ochildi! Yo'lovchi: {thread.order.passenger.display_name}. "
+            f"Buyurtma #{thread.order_id} bo'yicha suhbat ochildi."
         )
 
 

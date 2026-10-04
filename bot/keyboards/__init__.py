@@ -162,6 +162,7 @@ def match_keyboard(request_id: int, match_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🎫 Band qilish", callback_data=f"book_match:{request_id}:{match_id}")],
+            [InlineKeyboardButton(text="💬 Suhbat", callback_data=f"open_chat:{request_id}:{match_id}")],
             [InlineKeyboardButton(text="🔍 Boshqa mosliklar", callback_data=f"refresh_matches:{request_id}")],
         ]
     )

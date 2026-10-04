@@ -412,6 +412,14 @@ async def book_trip(telegram_id: int, trip_id: int, seats: int):
     return await sync_to_async(_book_trip)(telegram_id, trip_id, seats)
 
 
+async def book_driver_request(telegram_id: int, request_id: int, trip_id: int | None = None):
+    return await sync_to_async(_book_driver_request)(telegram_id, request_id, trip_id)
+
+
+async def open_chat_for_request(telegram_id: int, request_id: int):
+    return await sync_to_async(_open_chat_for_request)(telegram_id, request_id)
+
+
 def _get_matching_for_user(telegram_id: int, request_id: int):
     from apps.rides.selectors import get_request_by_id
     from apps.matching.services import get_ranked_matches

@@ -408,6 +408,65 @@ async def book_matching_trip(callback: CallbackQuery) -> None:
             f"Buyurtma #{order.pk} yaratildi. Holati: {order.get_status_display()}. "
             "O'rinlar haydovchi qabul qilgandan keyin band qilinadi."
         )
+        # Ask if passenger wants to open chat
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Ha, suhbat ochish", callback_data=f"open_chat_after_book:{order.pk}")],
+                [InlineKeyboardButton(text="❌ Yo'q, hozir qolish", callback_data="back_to_menu")],
+            ]
+        )
+        await callback.message.answer(
+            "Siz haydovchi bilan suhbatlashishingiz mumkinmi?",
+            reply_markup=keyboard,
+        )
+
+
+@router.callback_query(F.data.startswith("open_chat_after_book:"))
+async def open_chat_after_book(callback: CallbackQuery) -> None:
+    try:
+        order_id = int(callback.data.partition(":")[2])
+        from bot.services.platform import _get_user
+        user = _get_user(callback.from_user.id)
+        from apps.chat.services import get_or_create_conversation
+        thread, created = get_or_create_conversation(user=user, order_id=order_id)
+    except (ValueError, BusinessError) as error:
+        text = error.message if isinstance(error, BusinessError) else "Suhbat ochilshida xatolik."
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer("Suhbat ochildi!")
+    if callback.message:
+        await callback.message.answer(
+            f"Suhbatga ochildi! Yo'lovchi: {thread.order.passenger.display_name}. "
+            f"Buyurtma #{thread.order_id} bo'yicha suhbat ochildi."
+        )
+
+
+@router.callback_query(F.data.startswith("open_chat:"))
+async def open_chat_from_match(callback: CallbackQuery) -> None:
+    try:
+        _, request_id, match_id = callback.data.split(":", maxsplit=2)
+        from apps.matching.models import TripMatch
+        from apps.chat.services import get_or_create_conversation
+        from bot.services.platform import _get_user
+        user = _get_user(callback.from_user.id)
+        match = TripMatch.objects.select_related("request", "trip").filter(pk=match_id).first()
+        if match is None:
+            await callback.answer("Mos yo'lov topilmadi.", show_alert=True)
+            return
+        if match.request_id != request_id or match.request.passenger_id != user.pk:
+            await callback.answer("Bu suhbatga kirish huquqingiz yo'q.", show_alert=True)
+            return
+        thread, created = get_or_create_conversation(user=user, order_id=None, trip_id=match.trip_id, request_id=match.request_id)
+    except (ValueError, BusinessError) as error:
+        text = error.message if isinstance(error, BusinessError) else "Suhbat ochilshida xatolik."
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer("Suhbat ochildi!")
+    if callback.message:
+        await callback.message.answer(
+            f"Suhbatga ochildi! Yo'lovchi: {thread.order.passenger.display_name}. "
+            f"Buyurtma #{thread.order_id} bo'yicha suhbat ochildi."
+        )
 
 
 @router.callback_query(F.data.startswith("request:cancel:"))
