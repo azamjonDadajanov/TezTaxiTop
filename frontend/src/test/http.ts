@@ -5,7 +5,7 @@
  *  exactly which endpoints a screen asked for - which is how the "nothing is
  *  chosen for the user" requirement is asserted.
  */
-import axios, { type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse, AxiosError } from 'axios'
+import { type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse, AxiosError } from 'axios'
 import { api } from '../api'
 
 export type StubReply = { status?: number; data?: unknown }
