@@ -82,7 +82,7 @@ class BotPackageTests(SimpleTestCase):
             self.assertIsInstance(bot, Bot)
             self.assertEqual(
                 [router.name for router in configured_dispatcher.sub_routers],
-                ["menu", "start", "registration", "passenger", "driver"],
+                ["menu", "start", "registration", "review", "passenger", "driver"],
             )
         finally:
             await bot.session.close()
@@ -90,7 +90,7 @@ class BotPackageTests(SimpleTestCase):
     def test_dispatcher_registers_every_available_handler(self) -> None:
         self.assertEqual(
             [router.name for router in dispatcher.get_routers()],
-            ["menu", "start", "registration", "passenger", "driver"],
+            ["menu", "start", "registration", "review", "passenger", "driver"],
         )
 
     def test_menu_router_precedes_all_fsm_routers(self) -> None:

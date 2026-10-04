@@ -197,11 +197,20 @@ class DriverBookingTests(BookingAPIBase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data["error"]["code"], "not_a_driver")
 
-    def test_driver_no_active_trips_rejected(self) -> None:
+    def test_driver_no_active_trips_auto_creates_trip(self) -> None:
         ride_services.cancel_trip(self.trip, reason="test")
         request = self._make_request(self.passenger)
         response = self._book(self.driver_user, request)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], OrderStatus.ACCEPTED)
+
+    def test_driver_no_vehicle_rejected(self) -> None:
+        driver2 = self.data.create_driver()
+        driver2.profile.vehicles.all().delete()
+        request = self._make_request(self.passenger)
+        response = self._book(driver2.user, request)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"]["code"], "validation_error")
 
     def test_incompatible_route_rejected(self) -> None:
         """A request travelling the opposite way is never a match."""

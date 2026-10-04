@@ -82,10 +82,17 @@ export function DirectionsPage() {
   // Queries for nearby routes
   const [lat, lon] = position
 
+  const [activeTab, setActiveTab] = useState<'requests' | 'trips'>(isDriver ? 'requests' : 'trips')
+
+  // Synchronize initial default if roleMode changes
+  useEffect(() => {
+    setActiveTab(isDriver ? 'requests' : 'trips')
+  }, [isDriver])
+
   // 1. Passenger query: finds nearby driver trips (taxis)
   const nearbyTripsQuery = useQuery({
     queryKey: ['nearby-trips', lat, lon, radiusKm],
-    enabled: !isDriver,
+    enabled: activeTab === 'trips',
     queryFn: async () => {
       const { data } = await api.get<NearbyTrips>('/rides/trips/nearby/', {
         params: { lat, lon, radius_km: radiusKm },
@@ -97,7 +104,7 @@ export function DirectionsPage() {
   // 2. Driver query: finds nearby passenger requests
   const nearbyRequestsQuery = useQuery({
     queryKey: ['nearby-requests', lat, lon, radiusKm],
-    enabled: isDriver,
+    enabled: activeTab === 'requests',
     queryFn: async () => {
       const { data } = await api.get<NearbyRequests>('/rides/requests/nearby/', {
         params: { lat, lon, radius_km: radiusKm },
@@ -106,8 +113,9 @@ export function DirectionsPage() {
     },
   })
 
-  const currentQuery = isDriver ? nearbyRequestsQuery : nearbyTripsQuery
-  const items = (isDriver ? nearbyRequestsQuery.data?.results : nearbyTripsQuery.data?.results) ?? []
+  const isRequestsView = activeTab === 'requests'
+  const currentQuery = isRequestsView ? nearbyRequestsQuery : nearbyTripsQuery
+  const items = (isRequestsView ? nearbyRequestsQuery.data?.results : nearbyTripsQuery.data?.results) ?? []
   const count = items.length
 
   const refetchAll = () => {
@@ -117,13 +125,9 @@ export function DirectionsPage() {
   return (
     <div className="directions-page-container">
       <PageHeading
-        eyebrow={isDriver ? "HAYDOVCHI UCHUN YO‘NALISHLAR" : "YO‘LOVCHI UCHUN YO‘NALISHLAR"}
-        title="Yaqin Marshrutlar va Yo‘nalishlar"
-        description={
-          isDriver
-            ? "Joylashuvingiz atrofidagi (25 km gacha) yo‘lovchilar so‘rovlari va boshlang‘ich nuqtalari."
-            : "Joylashuvingiz atrofidagi (25 km gacha) taksi yo‘lovlari va jo‘nash nuqtalari."
-        }
+        eyebrow="25 KM RADIUSDAGI YO‘NALISHLAR"
+        title="Yaqin Marshrutlar va Barcha Arizalar"
+        description="25 km radiusdagi barcha yo‘lovchilar arizalari yoki taksi yo‘lovlarini ko‘ring va istalganiga to‘g‘ridan-to‘g‘ri buyurtma bering."
         action={
           <div className="topbar-actions">
             <button
@@ -166,9 +170,25 @@ export function DirectionsPage() {
         </div>
 
         <div className="directions-radius-selector">
-          <SlidersHorizontal size={15} />
-          <span>Radius:</span>
+          <div className="directions-tab-pills">
+            <button
+              type="button"
+              className={`pill-button ${activeTab === 'trips' ? 'pill-active' : ''}`}
+              onClick={() => setActiveTab('trips')}
+            >
+              <CarTaxiFront size={14} /> Taksilar (Safarlar)
+            </button>
+            <button
+              type="button"
+              className={`pill-button ${activeTab === 'requests' ? 'pill-active' : ''}`}
+              onClick={() => setActiveTab('requests')}
+            >
+              <UsersRound size={14} /> Yo‘lovchilar (Arizalar)
+            </button>
+          </div>
+
           <div className="directions-radius-pills">
+            <SlidersHorizontal size={14} />
             {RADIUS_OPTIONS.map((r) => (
               <button
                 key={r}
@@ -195,16 +215,16 @@ export function DirectionsPage() {
         loading={currentQuery.isLoading}
         error={currentQuery.error ? readableError(currentQuery.error) : undefined}
         empty={!currentQuery.isLoading && count === 0}
-        emptyTitle={isDriver ? "Yaqin atrofda yo‘lovchi so‘rovi yo‘q" : "Yaqin atrofda faol taksi yo‘lovi yo‘q"}
+        emptyTitle={isRequestsView ? "Yaqin atrofda yo‘lovchi so‘rovi yo‘q" : "Yaqin atrofda faol taksi yo‘lovi yo‘q"}
         emptyDescription={
-          isDriver
+          isRequestsView
             ? `${radiusKm} km radius ichida hozircha yangi so‘rov topilmadi. Radiusni oshiring yoki xaritani tekshiring.`
             : `${radiusKm} km radius ichida hozircha mos taksi topilmadi. Radiusni oshiring yoki xaritani tekshiring.`
         }
-        emptyIcon={isDriver ? UsersRound : CarTaxiFront}
+        emptyIcon={isRequestsView ? UsersRound : CarTaxiFront}
         emptyAction={
           <a
-            href={isDriver ? "/map" : "/taxi-map"}
+            href={isRequestsView ? "/map" : "/taxi-map"}
             className="button button-outline"
           >
             <Compass size={16} />
@@ -218,7 +238,7 @@ export function DirectionsPage() {
             Topilgan yo‘nalishlar: <strong>{count} ta</strong> ({radiusKm} km ichida)
           </span>
           <span className="directions-role-indicator">
-            {isDriver ? '🚗 Haydovchi rejimi (Yo‘lovchilarni qidirish)' : '👤 Yo‘lovchi rejimi (Taksilarni qidirish)'}
+            {isRequestsView ? '👥 Yo‘lovchilar so‘rovlari (Arizalar)' : '🚕 Taksi yo‘lovlari (Haydovchilar)'}
           </span>
         </div>
 
@@ -227,7 +247,7 @@ export function DirectionsPage() {
             <TripActionCard
               key={item.id}
               item={item}
-              type={isDriver ? 'passenger' : 'taxi'}
+              type={isRequestsView ? 'passenger' : 'taxi'}
               onBookSuccess={refetchAll}
             />
           ))}

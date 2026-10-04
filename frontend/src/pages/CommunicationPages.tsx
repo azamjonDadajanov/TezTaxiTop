@@ -27,14 +27,20 @@ export function ChatPage() {
   const location = useLocation()
   const navOrderId = (location.state as { orderId?: number } | null)?.orderId ?? null
   const queryClient = useQueryClient()
-  const [orderId, setOrderId] = useState<number | null>(navOrderId)
+
+  // Support deep-linking from Telegram WebApp: /chat?order_id=123
+  const searchParams = new URLSearchParams(location.search)
+  const queryOrderId = searchParams.get('order_id') ? Number(searchParams.get('order_id')) : null
+  const initialOrderId = navOrderId ?? queryOrderId
+
+  const [orderId, setOrderId] = useState<number | null>(initialOrderId)
   const [text, setText] = useState('')
 
   useEffect(() => {
-    if (navOrderId) {
-      setOrderId(navOrderId)
+    if (initialOrderId) {
+      setOrderId(initialOrderId)
     }
-  }, [navOrderId])
+  }, [initialOrderId])
   const threads = useQuery({ queryKey: ['chat-threads'], queryFn: async () => toArray((await api.get<Thread[] | { results: Thread[] }>('/chat/chats/')).data) })
   const messages = useQuery({ queryKey: ['chat-messages', orderId], enabled: Boolean(orderId), refetchInterval: 8000, queryFn: async () => {
     const previous = queryClient.getQueryData<{ results: ChatMessage[]; next_after_id: number; is_closed: boolean }>(['chat-messages', orderId])

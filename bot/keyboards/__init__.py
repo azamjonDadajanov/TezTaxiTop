@@ -145,12 +145,12 @@ def order_actions_keyboard(order_id: int, status: str) -> InlineKeyboardMarkup:
         buttons.append(InlineKeyboardButton(text="✅ Qabul qilish", callback_data=f"order:accept:{order_id}"))
         buttons.append(InlineKeyboardButton(text="❌ Rad etish", callback_data=f"order:reject:{order_id}"))
     elif status == "accepted":
-        buttons.append(InlineKeyboardButton(text="🚗 Yo'lga chiqdi", callback_data=f"order:start:{order_id}"))
+        buttons.append(InlineKeyboardButton(text="📍 Yetib keldim", callback_data=f"order:arrived:{order_id}"))
         buttons.append(InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"order:cancel:{order_id}"))
-    elif status == "in_progress":
-        buttons.append(InlineKeyboardButton(text="✅ Yakunlash", callback_data=f"order:complete:{order_id}"))
     elif status == "driver_arrived":
-        buttons.append(InlineKeyboardButton(text="🚗 Yo'lga chiqdi", callback_data=f"order:start:{order_id}"))
+        buttons.append(InlineKeyboardButton(text="🚗 Safarni boshlash", callback_data=f"order:start:{order_id}"))
+    elif status == "in_progress":
+        buttons.append(InlineKeyboardButton(text="🏁 Safarni yakunlash", callback_data=f"order:complete:{order_id}"))
 
     if buttons:
         return InlineKeyboardMarkup(inline_keyboard=[buttons])

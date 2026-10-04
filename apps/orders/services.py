@@ -228,7 +228,46 @@ def book_passenger_request(
                 trip = cand
                 break
         if trip is None:
-            raise BusinessValidationError("Ushbu so'rovga mos keladigan faol yo'lovingiz topilmadi.")
+            vehicle = (
+                driver_profile.vehicles.filter(is_active=True).first()
+                or driver_profile.vehicles.first()
+            )
+            if vehicle is None:
+                raise BusinessValidationError(
+                    "Avtomobil topilmadi. Buyurtmani qabul qilish uchun avval avtomobil qo'shing."
+                )
+
+            dep_time = passenger_request.departure_from
+            if not dep_time or dep_time < timezone.now():
+                dep_time = timezone.now() + timedelta(minutes=15)
+
+            total_seats = max(vehicle.seats_for_passengers or 4, seats_needed)
+            price_per_seat = passenger_request.max_price_per_seat or Decimal("50000.00")
+
+            trip = DriverTrip.objects.create(
+                driver=driver_profile,
+                vehicle=vehicle,
+                from_location=passenger_request.from_location,
+                to_location=passenger_request.to_location,
+                from_address=passenger_request.from_address,
+                to_address=passenger_request.to_address,
+                from_place_name=passenger_request.from_place_name,
+                to_place_name=passenger_request.to_place_name,
+                from_city_name=passenger_request.from_city_name,
+                to_city_name=passenger_request.to_city_name,
+                from_district_name=passenger_request.from_district_name,
+                to_district_name=passenger_request.to_district_name,
+                from_latitude=passenger_request.from_latitude,
+                from_longitude=passenger_request.from_longitude,
+                to_latitude=passenger_request.to_latitude,
+                to_longitude=passenger_request.to_longitude,
+                departure_time=dep_time,
+                total_seats=total_seats,
+                available_seats=total_seats,
+                price_per_seat=price_per_seat,
+                status=DriverTripStatus.ACTIVE,
+                comment=f"So'rov #{passenger_request.pk} bo'yicha qabul qilingan safar",
+            )
     else:
         if trip.driver_id != driver_profile.pk:
             raise UnauthorizedOrderAccess("Bu yo'lov sizning profilingizga tegishli emas.")
@@ -418,7 +457,9 @@ def complete_order(order: Order) -> Order:
     locked_order.status = OrderStatus.COMPLETED
     locked_order.completed_at = timezone.now()
     locked_order.save(update_fields=["status", "completed_at", "updated_at"])
+    _notify_parties(locked_order, "order_completed")
     _close_chat(locked_order, "Sayohat yakunlandi. Yo'lganiz yaxshi bo'lsin!")
+    transaction.on_commit(lambda: _send_rating_prompts(locked_order))
     return locked_order
 
 
@@ -437,6 +478,7 @@ def mark_no_show(order: Order, *, reason: str = "") -> Order:
     locked_order.save(
         update_fields=["status", "cancelled_at", "cancellation_reason", "updated_at"]
     )
+    _notify_parties(locked_order, "order_no_show")
     _close_chat(locked_order, "Yo'lovchi kelmadi.")
     return locked_order
 
@@ -522,6 +564,48 @@ def _notify_parties(order: Order, reason: str) -> None:
         create_order_notification(order, reason=reason)
     except Exception:  # pragma: no cover - notification must never break the flow
         logger.exception("Buyurtma bildirishnoma yaratilmadi: order=%s", order.pk)
+
+
+def _send_rating_prompts(order: Order) -> None:
+    """Send Telegram rating prompt with inline ⭐ buttons to both parties.
+
+    Called via ``transaction.on_commit`` so the DB row is guaranteed to exist.
+    Failures are swallowed — rating prompts are best-effort.
+    """
+    from apps.core.telegram import get_telegram_gateway, is_bot_configured
+
+    if not is_bot_configured():
+        return
+
+    gateway = get_telegram_gateway()
+    order_id = order.pk
+    route = order.trip.route_label() if hasattr(order.trip, "route_label") else f"#{order_id}"
+
+    star_buttons = [
+        {"text": f"⭐ {i}", "callback_data": f"rate_order:{order_id}:{i}"}
+        for i in range(1, 6)
+    ]
+    reply_markup = {"inline_keyboard": [star_buttons]}
+
+    targets = [
+        (order.passenger, "haydovchini"),
+        (order.trip.driver.user, "yo'lovchini"),
+    ]
+
+    for user, whom in targets:
+        chat_id = user.telegram_chat_id
+        if not chat_id:
+            continue
+        text = (
+            f"🏁 <b>{route}</b> safari yakunlandi!\n\n"
+            f"Iltimos, {whom} baholang:"
+        )
+        try:
+            gateway.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Baholash so'rovi yuborilmadi: order=%s, user=%s (%s)", order_id, user.pk, exc
+            )
 
 
 __all__ = [

@@ -20,6 +20,91 @@ from apps.notifications.models import Notification
 logger = logging.getLogger(__name__)
 
 
+def _build_notification_telegram_payload(notification: Notification) -> tuple[str, dict | None]:
+    from django.conf import settings
+    from apps.notifications.models import NotificationType
+
+    emoji_map = {
+        NotificationType.NEW_ORDER: "📦",
+        NotificationType.ORDER_ACCEPTED: "✅",
+        NotificationType.ORDER_REJECTED: "❌",
+        NotificationType.ORDER_DRIVER_ARRIVED: "📍",
+        NotificationType.ORDER_IN_PROGRESS: "🚗",
+        NotificationType.ORDER_COMPLETED: "🏁",
+        NotificationType.TRIP_CANCELLED: "⚠️",
+        NotificationType.SUBSCRIPTION_ACTIVATED: "🎉",
+        NotificationType.SUBSCRIPTION_EXPIRING: "⏳",
+        NotificationType.SUBSCRIPTION_EXPIRED: "⚠️",
+        NotificationType.PAYMENT_SUCCESS: "💳",
+        NotificationType.PAYMENT_FAILED: "❌",
+        NotificationType.NEW_MESSAGE: "💬",
+        NotificationType.NEW_REVIEW: "⭐️",
+        NotificationType.MATCH_FOUND: "🔍",
+        NotificationType.DRIVER_VERIFIED: "🎉",
+        NotificationType.DRIVER_REJECTED: "❌",
+        NotificationType.VEHICLE_VERIFIED: "🚙",
+        NotificationType.VEHICLE_REJECTED: "❌",
+        NotificationType.SUPPORT_REPLY: "📩",
+        NotificationType.SYSTEM: "🔔",
+    }
+    emoji = emoji_map.get(notification.type, "🔔")
+    title = f"{emoji} <b>{notification.title}</b>"
+    text = f"{title}\n\n{notification.message}".strip()
+
+    webapp_url = getattr(settings, "TELEGRAM_WEBAPP_URL", "").strip()
+    reply_markup = None
+
+    path_map = {
+        NotificationType.NEW_ORDER: ("/orders", "driver_my_orders", "📦 Buyurtmalarni ochish"),
+        NotificationType.ORDER_ACCEPTED: ("/orders", "passenger_my_orders", "📦 Buyurtmani ko'rish"),
+        NotificationType.ORDER_REJECTED: ("/orders", "passenger_my_orders", "📦 Buyurtmalarni ko'rish"),
+        NotificationType.ORDER_DRIVER_ARRIVED: ("/orders", "passenger_my_orders", "📍 Buyurtmani ko'rish"),
+        NotificationType.ORDER_IN_PROGRESS: ("/orders", "passenger_my_orders", "🚗 Safar holati"),
+        NotificationType.ORDER_COMPLETED: ("/orders", "passenger_my_orders", "🏁 Buyurtma tafsilotlari"),
+        NotificationType.TRIP_CANCELLED: ("/directions", "back_to_menu", "🔍 Boshqa safar topish"),
+        NotificationType.SUBSCRIPTION_ACTIVATED: ("/subscription", "subscription", "💳 Obunani ko'rish"),
+        NotificationType.SUBSCRIPTION_EXPIRING: ("/subscription", "subscription", "💳 Obunani yangilash"),
+        NotificationType.SUBSCRIPTION_EXPIRED: ("/subscription", "subscription", "💳 Obunani faollashtirish"),
+        NotificationType.PAYMENT_SUCCESS: ("/payments", "payments", "💰 To'lovlar tarixi"),
+        NotificationType.PAYMENT_FAILED: ("/payments", "payments", "💰 To'lovlar"),
+        NotificationType.NEW_MESSAGE: ("/chat", "back_to_menu", "💬 Suhbatni ochish"),
+        NotificationType.NEW_REVIEW: ("/reviews", "profile", "⭐️ Baholarni ko'rish"),
+        NotificationType.MATCH_FOUND: ("/directions", "back_to_menu", "🔍 Mos safarlarni ko'rish"),
+        NotificationType.DRIVER_VERIFIED: ("/profile", "profile", "👤 Profilni ko'rish"),
+        NotificationType.DRIVER_REJECTED: ("/support", "support", "🆘 Qo'llab-quvvatlash"),
+        NotificationType.VEHICLE_VERIFIED: ("/vehicles", "driver_my_vehicles", "🚙 Avtomobillar"),
+        NotificationType.VEHICLE_REJECTED: ("/support", "support", "🆘 Qo'llab-quvvatlash"),
+        NotificationType.SUPPORT_REPLY: ("/support", "support", "🆘 Murojaatni ochish"),
+    }
+
+    if notification.type in path_map:
+        web_path, callback, btn_label = path_map[notification.type]
+        if webapp_url:
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": btn_label,
+                            "web_app": {"url": f"{webapp_url.rstrip('/')}{web_path}"},
+                        }
+                    ]
+                ]
+            }
+        elif callback:
+            reply_markup = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": btn_label,
+                            "callback_data": callback,
+                        }
+                    ]
+                ]
+            }
+
+    return text, reply_markup
+
+
 @shared_task(name="apps.notifications.tasks.deliver_pending_notifications_task")
 def deliver_pending_notifications_task(limit: int = DELIVERY_BATCH_SIZE) -> dict:
     """Push unsent notifications to Telegram (best effort).
@@ -42,9 +127,11 @@ def deliver_pending_notifications_task(limit: int = DELIVERY_BATCH_SIZE) -> dict
         if chat_id is None:
             continue
         try:
+            text, reply_markup = _build_notification_telegram_payload(notification)
             gateway.send_message(
                 chat_id=chat_id,
-                text=f"{notification.title}\n\n{notification.message}".strip(),
+                text=text,
+                reply_markup=reply_markup,
             )
         except Exception as exc:  # noqa: BLE001 - delivery must never kill the run
             failed += 1
@@ -91,9 +178,11 @@ def send_notification_task(notification_id: int) -> dict:
         return {"sent": False, "reason": "no_telegram"}
 
     try:
+        text, reply_markup = _build_notification_telegram_payload(notification)
         get_telegram_gateway().send_message(
             chat_id=notification.user.telegram_chat_id,
-            text=f"{notification.title}\n\n{notification.message}".strip(),
+            text=text,
+            reply_markup=reply_markup,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Bildirishnoma yuborilmadi (#%s): %s", notification.pk, exc)

@@ -53,3 +53,6 @@ EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["anon"] = "1000/min"
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["user"] = "1000/min"
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["burst"] = "1000/s"
+
+# Mock/disable external network delivery during tests
+TELEGRAM_BOT_TOKEN = ""

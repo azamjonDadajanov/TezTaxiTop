@@ -300,6 +300,20 @@ def verify_driver_profile(profile: DriverProfile, *, verified: bool = True) -> D
     profile.is_verified = verified
     profile.verified_at = timezone.now() if verified else None
     profile.save(update_fields=["is_verified", "verified_at", "updated_at"])
+
+    try:
+        from apps.notifications.services import (
+            create_driver_rejected_notification,
+            create_driver_verified_notification,
+        )
+
+        if verified:
+            create_driver_verified_notification(profile)
+        else:
+            create_driver_rejected_notification(profile)
+    except Exception:
+        logger.exception("Haydovchi tasdiqlash bildirishnomasi yaratilmadi: %s", profile.pk)
+
     return profile
 
 

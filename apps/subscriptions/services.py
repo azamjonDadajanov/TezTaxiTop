@@ -188,6 +188,12 @@ def activate_subscription(
         locked.cancelled_at = timezone.now()
         locked.save(update_fields=["status", "cancelled_at", "updated_at"])
         logger.info("Obuna kengaytirildi: subscription=%s", current.pk)
+        try:
+            from apps.notifications.services import create_subscription_activated_notification
+
+            create_subscription_activated_notification(current)
+        except Exception:
+            logger.exception("Obuna kengaytirish bildirishnomasi yaratilmadi")
         return current
 
     locked.starts_at = effective_start
@@ -203,6 +209,14 @@ def activate_subscription(
         locked.full_clean()
     except Exception as exc:  # noqa: BLE001 - pragma: no cover
         raise InvalidSubscription(str(exc)) from exc
+
+    try:
+        from apps.notifications.services import create_subscription_activated_notification
+
+        create_subscription_activated_notification(locked)
+    except Exception:
+        logger.exception("Obuna faollashtirish bildirishnomasi yaratilmadi")
+
     return locked
 
 

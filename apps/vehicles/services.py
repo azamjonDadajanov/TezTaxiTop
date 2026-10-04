@@ -104,6 +104,20 @@ def verify_vehicle(vehicle: Vehicle, *, verified: bool = True) -> Vehicle:
     vehicle.is_verified = verified
     vehicle.verified_at = timezone.now() if verified else None
     vehicle.save(update_fields=["is_verified", "verified_at", "updated_at"])
+
+    try:
+        from apps.notifications.services import (
+            create_vehicle_rejected_notification,
+            create_vehicle_verified_notification,
+        )
+
+        if verified:
+            create_vehicle_verified_notification(vehicle)
+        else:
+            create_vehicle_rejected_notification(vehicle)
+    except Exception:
+        logger.exception("Avtomobil tasdiqlash bildirishnomasi yaratilmadi: %s", vehicle.pk)
+
     return vehicle
 
 

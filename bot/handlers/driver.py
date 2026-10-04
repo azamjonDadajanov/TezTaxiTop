@@ -556,7 +556,7 @@ async def show_driver_requests(message: Message, user_id: int | None = None) -> 
         await message.answer(html.escape(error.message))
         return
     if not requests:
-        await message.answer("Faol yo'lovlaringiz marshrutiga mos so'rov topilmadi.")
+        await message.answer("Hozircha faol yo'lovchi so'rovi topilmadi.")
         return
     for request in requests:
         text = (
@@ -564,13 +564,13 @@ async def show_driver_requests(message: Message, user_id: int | None = None) -> 
             f"{html.escape(request.origin_display)} → {html.escape(request.destination_display)}\n"
             f"🕐 {timezone.localtime(request.departure_from):%d.%m.%Y %H:%M}\n"
             f"Maksimal narx: {request.max_price_per_seat or 'cheklanmagan'} so'm\n"
-            f"Haydovchi: {html.escape(request.passenger.display_name)}\n\n"
-            f"Boshlanish vaqti: {timezone.localtime(request.departure_from).strftime('%d.%m.%Y %H:%M')}\n"
+            f"Yo'lovchi: {html.escape(request.passenger.display_name)}\n"
         )
         actions = []
-        # Driver can book this passenger if there's a compatible trip
-        actions.append([InlineKeyboardButton(text="📕 Band qilish", callback_data=f"book_request:{request.pk}")])
-        actions.append([InlineKeyboardButton(text="💬 Suhbat", callback_data=f"chat_request:{request.pk}")])
+        actions.append([
+            InlineKeyboardButton(text="📕 Qabul qilish / Band qilish", callback_data=f"book_request:{request.pk}"),
+            InlineKeyboardButton(text="💬 Suhbat", callback_data=f"chat_request:{request.pk}"),
+        ])
         markup = InlineKeyboardMarkup(inline_keyboard=actions)
         await message.answer(text, parse_mode="HTML", reply_markup=markup)
 

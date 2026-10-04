@@ -103,7 +103,63 @@ def send_message(*, thread: ChatThread, sender: User, text: str, message_type: s
     thread.last_message_at = message.created_at
     thread.last_message_preview = clean_text[:PREVIEW_LENGTH]
     thread.save(update_fields=["last_message_at", "last_message_preview", "updated_at"])
+    _notify_chat_message(message)
     return message
+
+
+def _notify_chat_message(message: ChatMessage) -> None:
+    """Send direct Telegram notification to the counterpart with Web App open chat button."""
+    from django.conf import settings
+    from apps.core.telegram import get_telegram_gateway
+    from apps.notifications.services import create_new_message_notification
+
+    thread = message.thread
+    order = thread.order
+    recipient = order.trip.driver.user if message.sender_id == order.passenger_id else order.passenger
+
+    try:
+        create_new_message_notification(message, recipient=recipient)
+    except Exception:
+        logger.exception("Chat bildirishnomasi yaratilmadi: msg=%s", message.pk)
+
+    if not recipient.telegram_chat_id:
+        return
+
+    webapp_url = getattr(settings, "TELEGRAM_WEBAPP_URL", "").strip()
+    if webapp_url:
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "💬 Suhbatni ochish",
+                        "web_app": {"url": f"{webapp_url.rstrip('/')}/chat?order_id={order.pk}"},
+                    }
+                ]
+            ]
+        }
+    else:
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "💬 Suhbatni ochish",
+                        "callback_data": f"open_chat_after_book:{order.pk}",
+                    }
+                ]
+            ]
+        }
+
+    gateway = get_telegram_gateway()
+    try:
+        sender_name = message.sender.display_name
+        text = f"💬 <b>Yangi xabar ({sender_name})</b>\n\n{message.text}"
+        gateway.send_message(
+            chat_id=recipient.telegram_chat_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    except Exception as exc:
+        logger.warning("Telegram xabar yetkazilmadi: msg=%s (%s)", message.pk, exc)
 
 
 @transaction.atomic

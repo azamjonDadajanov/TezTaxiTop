@@ -29,6 +29,15 @@ REASON_NOT_GIVEN = "ko'rsatilmagan"
 UNKNOWN_REASON = "noma'lum sabab"
 
 
+def _schedule_delivery(notification_id: int) -> None:
+    try:
+        from apps.notifications.tasks import send_notification_task
+
+        transaction.on_commit(lambda: send_notification_task.delay(notification_id))
+    except Exception:
+        pass
+
+
 @transaction.atomic
 def create_notification(
     *,
@@ -37,15 +46,17 @@ def create_notification(
     title: str = "",
     message: str = "",
 ) -> Notification:
-    """Create one notification record. Delivery happens later."""
+    """Create one notification record and schedule immediate delivery."""
     if notification_type not in NotificationType.values:
         notification_type = NotificationType.SYSTEM
-    return Notification.objects.create(
+    notification = Notification.objects.create(
         user=user,
         type=notification_type,
         title=title[:200],
         message=message[:1000],
     )
+    _schedule_delivery(notification.pk)
+    return notification
 
 
 def create_notifications(
@@ -68,7 +79,10 @@ def create_notifications(
     ]
     if not notifications:
         return []
-    return Notification.objects.bulk_create(notifications)
+    created = Notification.objects.bulk_create(notifications)
+    for notif in created:
+        _schedule_delivery(notif.pk)
+    return created
 
 
 @transaction.atomic
@@ -113,26 +127,23 @@ def get_required_notification(notification_id: int) -> Notification:
 # ---------------------------------------------------------------------------
 def create_new_order_notification_for_driver(order) -> Notification | None:
     driver_user = order.trip.driver.user
+    route = order.trip.route_label() if hasattr(order.trip, "route_label") else f"#{order.trip_id}"
     return create_notification(
         user=driver_user,
         notification_type=NotificationType.NEW_ORDER,
-        title="Yangi buyurtma",
+        title="Yangi buyurtma keldi",
         message=(
-            f"{order.passenger.display_name} sizning '{order.trip.route_label()}' yo'loviga "
+            f"{order.passenger.display_name} sizning '{route}' yo'nalishingizga "
             f"{order.seats_booked} ta o'rin band qilmoqchi."
         ),
     )
 
 
 def create_order_notification(order, *, reason: str) -> list[Notification]:
-    """Create the notification pair for any order state change.
-
-    ``reason`` values used by :mod:`apps.orders.services`:
-    ``order_accepted``, ``order_rejected``, ``order_cancelled_by_passenger``,
-    ``order_cancelled_by_driver``, ``order_driver_arrived``, ``order_in_progress``.
-    """
+    """Create notification records for order state transitions."""
     passenger_notification: Notification | None = None
     driver_notification: Notification | None = None
+    route = order.trip.route_label() if hasattr(order.trip, "route_label") else f"#{order.trip_id}"
 
     if reason == "order_accepted":
         passenger_notification = create_notification(
@@ -140,8 +151,8 @@ def create_order_notification(order, *, reason: str) -> list[Notification]:
             notification_type=NotificationType.ORDER_ACCEPTED,
             title="Buyurtmangiz qabul qilindi",
             message=(
-                f"Haydovchi buyurtmangizni qabul qildi. Marshrut: {order.trip.route_label()}, "
-                f"chuqish: {order.trip.departure_time:%Y-%m-%d %H:%M}."
+                f"Haydovchi buyurtmangizni qabul qildi. Marshrut: {route}, "
+                f"jo'nash: {order.trip.departure_time:%Y-%m-%d %H:%M}."
             ),
         )
     elif reason == "order_rejected":
@@ -175,18 +186,43 @@ def create_order_notification(order, *, reason: str) -> list[Notification]:
             ),
         )
     elif reason == "order_driver_arrived":
+        driver_name = (
+            order.trip.driver.user.display_name
+            if hasattr(order.trip.driver, "user")
+            else "Haydovchi"
+        )
         passenger_notification = create_notification(
             user=order.passenger,
-            notification_type=NotificationType.SYSTEM,
+            notification_type=NotificationType.ORDER_DRIVER_ARRIVED,
             title="Haydovchi yetib keldi",
-            message="Haydovchi sizni kutmoqda. Iltimos, tayyor bo'ling.",
+            message=f"Haydovchi {driver_name} olib ketish manziliga yetib keldi va sizni kutmoqda.",
         )
     elif reason == "order_in_progress":
         passenger_notification = create_notification(
             user=order.passenger,
-            notification_type=NotificationType.SYSTEM,
-            title="Yo'lga chiqdik",
-            message=f"{order.trip.route_label()} marshruti bo'yicha sayohat boshlandi.",
+            notification_type=NotificationType.ORDER_IN_PROGRESS,
+            title="Safar boshlandi",
+            message=f"{route} marshruti bo'yicha sayohat boshlandi. Oq yo'l!",
+        )
+    elif reason == "order_completed":
+        passenger_notification = create_notification(
+            user=order.passenger,
+            notification_type=NotificationType.ORDER_COMPLETED,
+            title="Safar yakunlandi",
+            message=f"{route} safari muvaffaqiyatli yakunlandi. Xizmatimizdan foydalanganingiz uchun rahmat!",
+        )
+        driver_notification = create_notification(
+            user=order.trip.driver.user,
+            notification_type=NotificationType.ORDER_COMPLETED,
+            title="Safar yakunlandi",
+            message=f"{route} bo'yicha {order.passenger.display_name} bilan safar yakunlandi.",
+        )
+    elif reason == "order_no_show":
+        passenger_notification = create_notification(
+            user=order.passenger,
+            notification_type=NotificationType.TRIP_CANCELLED,
+            title="Yo'lovchi kelmadi",
+            message="Siz belgilangan vaqtda kelmadingiz deb belgilandi va buyurtma bekor qilindi.",
         )
 
     created = [item for item in (passenger_notification, driver_notification) if item is not None]
@@ -195,8 +231,6 @@ def create_order_notification(order, *, reason: str) -> list[Notification]:
 
 def create_trip_cancelled_notification(trip) -> list[Notification]:
     """Inform every passenger holding an order on a cancelled trip."""
-    from apps.notifications.models import Notification as NotificationModel
-
     order_passengers = trip.orders.exclude(
         status__in=(
             "rejected",
@@ -205,13 +239,25 @@ def create_trip_cancelled_notification(trip) -> list[Notification]:
             "completed",
         )
     ).select_related("passenger")
+    route = trip.route_label() if hasattr(trip, "route_label") else f"#{trip.pk}"
     return create_notifications(
         users=[order.passenger for order in order_passengers],
         notification_type=NotificationType.TRIP_CANCELLED,
         title="Yo'lov bekor qilindi",
         message=(
-            f"{trip.route_label()} yo'lovi bekor qilindi. Iltimos, boshqa yo'lov tanlang."
+            f"{route} yo'lovi haydovchi tomonidan bekor qilindi. Iltimos, boshqa mos safarni tanlang."
         ),
+    )
+
+
+def create_passenger_request_cancelled_notification(request) -> list[Notification]:
+    """Inform active trip drivers if a booked request was cancelled."""
+    route = request.route_label() if hasattr(request, "route_label") else f"#{request.pk}"
+    return create_notifications(
+        users=[request.passenger],
+        notification_type=NotificationType.TRIP_CANCELLED,
+        title="So'rov bekor qilindi",
+        message=f"{route} bo'yicha so'rovingiz bekor qilindi.",
     )
 
 
@@ -221,7 +267,7 @@ def create_payment_notification(payment, *, success: bool) -> Notification:
             user=payment.user,
             notification_type=NotificationType.PAYMENT_SUCCESS,
             title="To'lov muvaffaqiyatli",
-            message=f"{payment.amount} so'm to'lovingiz tasdiqlandi.",
+            message=f"{payment.amount} so'm to'lovingiz muvaffaqiyatli tasdiqlandi.",
         )
     return create_notification(
         user=payment.user,
@@ -234,18 +280,136 @@ def create_payment_notification(payment, *, success: bool) -> Notification:
 
 
 def create_new_message_notification(message, *, recipient: User) -> Notification:
+    sender_name = message.sender.display_name if hasattr(message, "sender") else "Suhbatdosh"
     return create_notification(
         user=recipient,
         notification_type=NotificationType.NEW_MESSAGE,
-        title="Yangi xabar",
-        message=f"Buyurtma #{message.thread.order_id} bo'yicha yangi xaboringiz bor.",
+        title=f"Yangi xabar ({sender_name})",
+        message=f"Buyurtma #{message.thread.order_id} bo'yicha: {message.text[:120]}",
+    )
+
+
+def create_review_notification(review) -> Notification:
+    return create_notification(
+        user=review.reviewed_user,
+        notification_type=NotificationType.NEW_REVIEW,
+        title=f"Yangi baho: {'⭐' * review.rating} ({review.rating}/5)",
+        message=(
+            f"{review.reviewer.display_name} sizga {review.rating} ballik baho qoldirdi.\n"
+            f"Izoh: {review.comment or 'Izohsiz'}"
+        ),
+    )
+
+
+def create_subscription_activated_notification(subscription) -> Notification:
+    return create_notification(
+        user=subscription.driver.user,
+        notification_type=NotificationType.SUBSCRIPTION_ACTIVATED,
+        title="Obuna faollashtirildi",
+        message=(
+            f"'{subscription.plan.name}' obunangiz muvaffaqiyatli faollashtirildi! "
+            f"Muddati: {subscription.expires_at:%Y-%m-%d %H:%M} gacha."
+        ),
+    )
+
+
+def create_subscription_expiring_notification(subscription, days: int) -> Notification:
+    return create_notification(
+        user=subscription.driver.user,
+        notification_type=NotificationType.SUBSCRIPTION_EXPIRING,
+        title=f"Obuna {days} kundan keyin tugaydi",
+        message=(
+            f"'{subscription.plan.name}' obunangiz {subscription.expires_at:%Y-%m-%d %H:%M} "
+            "vaqtida tugaydi. Xizmatlardan uzluksiz foydalanish uchun yangi obuna xarid qiling."
+        ),
+    )
+
+
+def create_subscription_expired_notification(subscription) -> Notification:
+    return create_notification(
+        user=subscription.driver.user,
+        notification_type=NotificationType.SUBSCRIPTION_EXPIRED,
+        title="Obuna muddati tugadi",
+        message=(
+            f"'{subscription.plan.name}' obunangiz muddati tugadi. "
+            "Yangi yo'lovlar yaratish uchun obunani yangilang."
+        ),
+    )
+
+
+def create_driver_verified_notification(driver_profile) -> Notification:
+    return create_notification(
+        user=driver_profile.user,
+        notification_type=NotificationType.DRIVER_VERIFIED,
+        title="Haydovchi profilingiz tasdiqlandi",
+        message="Tabriklaymiz! Sizning haydovchi profilingiz administrator tomonidan muvaffaqiyatli tasdiqlandi.",
+    )
+
+
+def create_driver_rejected_notification(driver_profile, reason: str = "") -> Notification:
+    return create_notification(
+        user=driver_profile.user,
+        notification_type=NotificationType.DRIVER_REJECTED,
+        title="Haydovchi arizangiz rad etildi",
+        message=f"Haydovchi arizangiz rad etildi. Sabab: {reason or REASON_NOT_GIVEN}",
+    )
+
+
+def create_vehicle_verified_notification(vehicle) -> Notification:
+    return create_notification(
+        user=vehicle.driver.user,
+        notification_type=NotificationType.VEHICLE_VERIFIED,
+        title="Avtomobilingiz tasdiqlandi",
+        message=f"{vehicle.brand} {vehicle.model} ({vehicle.plate_number}) avtomobilingiz muvaffaqiyatli tasdiqlandi.",
+    )
+
+
+def create_vehicle_rejected_notification(vehicle, reason: str = "") -> Notification:
+    return create_notification(
+        user=vehicle.driver.user,
+        notification_type=NotificationType.VEHICLE_REJECTED,
+        title="Avtomobil rad etildi",
+        message=f"{vehicle.brand} {vehicle.model} ({vehicle.plate_number}) avtomobili rad etildi. Sabab: {reason or REASON_NOT_GIVEN}",
+    )
+
+
+def create_match_found_notification(*, user: User, match_count: int = 1, route_label: str = "") -> Notification:
+    return create_notification(
+        user=user,
+        notification_type=NotificationType.MATCH_FOUND,
+        title="Yangi mos safar topildi",
+        message=(
+            f"Sizning '{route_label}' yo'nalishingiz bo'yicha {match_count} ta yangi mos safar topildi!"
+            if route_label
+            else f"Siz uchun {match_count} ta yangi mos safar topildi!"
+        ),
+    )
+
+
+def create_passenger_request_expired_notification(request) -> Notification:
+    route = request.route_label() if hasattr(request, "route_label") else f"#{request.pk}"
+    return create_notification(
+        user=request.passenger,
+        notification_type=NotificationType.SYSTEM,
+        title="So'rov muddati tugadi",
+        message=f"'{route}' bo'yicha so'rovingizning jo'nash vaqti o'tganligi sababli yopildi.",
+    )
+
+
+def create_trip_expired_notification(trip) -> Notification:
+    route = trip.route_label() if hasattr(trip, "route_label") else f"#{trip.pk}"
+    return create_notification(
+        user=trip.driver.user,
+        notification_type=NotificationType.SYSTEM,
+        title="Yo'lov muddati tugadi",
+        message=f"'{route}' yo'lovingizning jo'nash vaqti o'tganligi sababli yopildi.",
     )
 
 
 def create_support_ticket_notification(ticket) -> Notification:
     return create_notification(
         user=ticket.user,
-        notification_type=NotificationType.SYSTEM,
+        notification_type=NotificationType.SUPPORT_REPLY,
         title="Murojaatga javob berildi",
         message=(
             f"'{ticket.subject}' murojaatingizga administrator javob berdi. "
@@ -256,14 +420,26 @@ def create_support_ticket_notification(ticket) -> Notification:
 
 __all__ = [
     "Notification",
+    "create_driver_rejected_notification",
+    "create_driver_verified_notification",
+    "create_match_found_notification",
     "create_new_message_notification",
     "create_new_order_notification_for_driver",
     "create_notification",
     "create_notifications",
     "create_order_notification",
+    "create_passenger_request_cancelled_notification",
+    "create_passenger_request_expired_notification",
     "create_payment_notification",
+    "create_review_notification",
+    "create_subscription_activated_notification",
+    "create_subscription_expired_notification",
+    "create_subscription_expiring_notification",
     "create_support_ticket_notification",
     "create_trip_cancelled_notification",
+    "create_trip_expired_notification",
+    "create_vehicle_rejected_notification",
+    "create_vehicle_verified_notification",
     "get_required_notification",
     "mark_all_as_read",
     "mark_as_read",

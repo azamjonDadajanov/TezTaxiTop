@@ -315,6 +315,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "")
 TELEGRAM_WEBHOOK_URL = os.environ.get("TELEGRAM_WEBHOOK_URL", "")
 TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_WEBAPP_URL = os.environ.get("TELEGRAM_WEBAPP_URL", "")
 
 # ---------------------------------------------------------------------------
 # 2GIS Places API (geocoding for trip origin / destination)

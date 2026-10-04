@@ -176,6 +176,7 @@ h1, h2, h3 { font-family: Manrope, sans-serif; }
 .record-detail-grid > span { display: inline-flex; align-items: center; gap: 6px; }
 .record-detail-grid > strong { margin-left: auto; color: var(--ink); font-size: 12px; }
 .record-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #edf1ea; }
+.action-hint { width: 100%; margin: 0 0 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .section-heading-spaced { margin-top: 30px; }
 .inline-create-form { display: grid; gap: 13px; margin-bottom: 22px; box-shadow: 0 7px 20px rgba(30,55,44,.035); }
 .form-title-row { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #edf1ea; color: #69816f; }

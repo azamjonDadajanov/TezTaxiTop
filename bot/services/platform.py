@@ -156,6 +156,8 @@ async def transition_trip(telegram_id: int, trip_id: int, action: str):
 
 
 def _driver_requests(telegram_id: int):
+    from django.db.models import Q
+    from django.utils import timezone
     from apps.rides.models import PassengerRequestStatus
     from apps.rides.selectors import build_route_filter, get_matchable_requests
     from apps.users.services import get_required_driver_profile
@@ -172,10 +174,6 @@ def _driver_requests(telegram_id: int):
             "price_per_seat",
         )
     )
-    if not trips:
-        return []
-    from django.db.models import Q
-
     route_filter = Q()
     for (
         origin_id,
@@ -205,15 +203,16 @@ def _driver_requests(telegram_id: int):
             passenger_count__lte=seats,
         ) & compatible_budget
 
-    if not route_filter:
-        return []
-
-    requests = (
+    active_base = (
         get_matchable_requests()
-        .filter(route_filter, status=PassengerRequestStatus.ACTIVE)
+        .filter(status=PassengerRequestStatus.ACTIVE, departure_until__gte=timezone.now())
         .exclude(passenger__telegram_id=telegram_id)
     )
-    return list(requests[:20])
+
+    if route_filter:
+        return list(active_base.filter(route_filter)[:20])
+
+    return list(active_base.order_by("-created_at")[:20])
 
 
 async def get_driver_requests(telegram_id: int):
@@ -410,6 +409,33 @@ def _book_trip(telegram_id: int, trip_id: int, seats: int):
 
 async def book_trip(telegram_id: int, trip_id: int, seats: int):
     return await sync_to_async(_book_trip)(telegram_id, trip_id, seats)
+
+
+def _book_driver_request(telegram_id: int, request_id: int, trip_id: int | None = None):
+    from apps.orders.services import book_passenger_request
+    from apps.rides.selectors import get_request_by_id, get_trip_by_id
+
+    user = _get_user(telegram_id)
+    passenger_request = get_request_by_id(request_id)
+    if passenger_request is None:
+        raise ResourceNotFound("Yo'lovchi so'rovi topilmadi.")
+    trip = get_trip_by_id(trip_id) if trip_id is not None else None
+    return book_passenger_request(
+        driver_user=user,
+        passenger_request=passenger_request,
+        trip=trip,
+    )
+
+
+def _open_chat_for_request(telegram_id: int, request_id: int):
+    from apps.chat.services import get_or_create_conversation
+    from apps.rides.selectors import get_request_by_id
+
+    user = _get_user(telegram_id)
+    passenger_request = get_request_by_id(request_id)
+    if passenger_request is None:
+        raise ResourceNotFound("Yo'lovchi so'rovi topilmadi.")
+    return get_or_create_conversation(user=user, order_id=None, request_id=passenger_request.pk)
 
 
 async def book_driver_request(telegram_id: int, request_id: int, trip_id: int | None = None):

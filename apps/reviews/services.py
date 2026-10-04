@@ -71,6 +71,14 @@ def create_review(
 
     recalculate_driver_rating(reviewed_user)
     logger.info("Baholash yaratildi: #%s (%s -> %s: %s)", review.pk, reviewer.pk, reviewed_user.pk, rating)
+
+    try:
+        from apps.notifications.services import create_review_notification
+
+        create_review_notification(review)
+    except Exception:
+        logger.exception("Baho bildirishnomasi yaratilmadi: %s", review.pk)
+
     return review
 
 

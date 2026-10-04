@@ -187,9 +187,26 @@ class PassengerRequestViewSet(
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if not self.request.user.is_staff:
+        all_active = (
+            self.request.query_params.get("all") in {"1", "true", "True"}
+            or self.request.query_params.get("only_active") in {"1", "true", "True"}
+        )
+        if not self.request.user.is_staff and not all_active:
             queryset = queryset.filter(passenger=self.request.user)
+        elif all_active:
+            queryset = queryset.filter(
+                status=PassengerRequestStatus.ACTIVE,
+                departure_until__gte=timezone.now(),
+            )
         return ride_selectors.search_requests(queryset, self.request.query_params.get("search"))
+
+    @extend_schema(summary="Barcha faol so'rovlar", responses={200: PassengerRequestSerializer(many=True)})
+    @action(detail=False, methods=["get"])
+    def all_active(self, request) -> Response:
+        requests = ride_selectors.get_active_requests().filter(
+            departure_until__gte=timezone.now()
+        ).order_by("-created_at")[:50]
+        return Response(PassengerRequestSerializer(requests, many=True).data)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

@@ -10,6 +10,7 @@ def get_routers() -> list[Router]:
     from bot.handlers.menu import router as menu_router
     from bot.handlers.start import router as start_router
     from bot.handlers.registration import router as registration_router
+    from bot.handlers.review import router as review_router
     from bot.handlers.passenger import router as passenger_router
     from bot.handlers.driver import router as driver_router
 
@@ -17,6 +18,7 @@ def get_routers() -> list[Router]:
         menu_router,
         start_router,
         registration_router,
+        review_router,
         passenger_router,
         driver_router,
     ]
