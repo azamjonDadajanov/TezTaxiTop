@@ -5,12 +5,11 @@ from __future__ import annotations
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.exceptions import BusinessError, NotADriver
+from apps.core.exceptions import NotADriver
 from apps.core.permissions import IsAdminOrReadOnly
 from apps.payments.serializers import PaymentSerializer
 from apps.subscriptions import selectors as subscription_selectors
@@ -21,10 +20,6 @@ from apps.subscriptions.serializers import (
     SubscriptionPlanWriteSerializer,
     SubscriptionPurchaseSerializer,
 )
-
-
-def _raise_business(exc: BusinessError) -> DRFValidationError:
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -66,20 +61,14 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            plan = subscription_services.create_plan(**serializer.validated_data)
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        plan = subscription_services.create_plan(**serializer.validated_data)
         return Response(SubscriptionPlanSerializer(plan).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         serializer = self.get_serializer(data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        try:
-            plan = subscription_services.update_plan(self.get_object(), **serializer.validated_data)
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        plan = subscription_services.update_plan(self.get_object(), **serializer.validated_data)
         return Response(SubscriptionPlanSerializer(plan).data)
 
 
@@ -137,17 +126,14 @@ class DriverSubscriptionViewSet(
         serializer = SubscriptionPurchaseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         plan = subscription_services.get_required_plan(serializer.validated_data["plan_id"])
-        try:
-            subscription = subscription_services.create_subscription(
-                driver=driver_profile,
-                plan=plan,
-                auto_renew=serializer.validated_data.get("auto_renew", False),
-            )
-            payment, invoice = build_subscription_payment_invoice(
-                user=request.user, subscription=subscription
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        subscription = subscription_services.create_subscription(
+            driver=driver_profile,
+            plan=plan,
+            auto_renew=serializer.validated_data.get("auto_renew", False),
+        )
+        payment, invoice = build_subscription_payment_invoice(
+            user=request.user, subscription=subscription
+        )
         return Response(
             {
                 "subscription": DriverSubscriptionSerializer(subscription).data,
@@ -206,8 +192,5 @@ class CancelSubscriptionView(APIView):
             from apps.core.exceptions import UnauthorizedOrderAccess
 
             raise UnauthorizedOrderAccess()
-        try:
-            subscription = subscription_services.cancel_subscription(subscription)
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        subscription = subscription_services.cancel_subscription(subscription)
         return Response(DriverSubscriptionSerializer(subscription).data)

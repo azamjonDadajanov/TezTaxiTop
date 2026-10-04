@@ -19,14 +19,7 @@ from apps.chat.serializers import (
     ChatThreadSerializer,
     OpenChatRequestSerializer,
 )
-from apps.core.exceptions import BusinessError
 from apps.orders.selectors import get_order_by_id
-
-
-def _handle_business_error(exc: BusinessError):
-    from rest_framework.exceptions import ValidationError as DRFValidationError
-
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -49,15 +42,12 @@ class OpenChatView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        try:
-            thread, created = chat_services.get_or_create_conversation(
-                user=request.user,
-                order_id=data.get("order_id"),
-                trip_id=data.get("trip_id"),
-                request_id=data.get("request_id"),
-            )
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        thread, created = chat_services.get_or_create_conversation(
+            user=request.user,
+            order_id=data.get("order_id"),
+            trip_id=data.get("trip_id"),
+            request_id=data.get("request_id"),
+        )
 
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         thread_data = ChatThreadSerializer(thread, context={"request": request}).data
@@ -154,15 +144,12 @@ class ChatMessageView(APIView):
         serializer = ChatMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        try:
-            message = chat_services.send_message(
-                thread=thread,
-                sender=request.user,
-                text=data["text"],
-                message_type=data.get("type", "text"),
-            )
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        message = chat_services.send_message(
+            thread=thread,
+            sender=request.user,
+            text=data["text"],
+            message_type=data.get("type", "text"),
+        )
         return Response(
             ChatMessageSerializer(message, context={"request": request}).data,
             status=status.HTTP_201_CREATED,

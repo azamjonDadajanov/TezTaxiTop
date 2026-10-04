@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.exceptions import BusinessError, ResourceNotFound
+from apps.core.exceptions import ResourceNotFound
 from apps.orders import selectors as order_selectors
 from apps.orders import services as order_services
 from apps.orders.models import Order, OrderStatus
@@ -26,10 +26,6 @@ from apps.orders.serializers import (
     OrderSerializer,
 )
 from apps.rides.selectors import get_trip_by_id
-
-
-def _raise_business(exc: BusinessError) -> DRFValidationError:
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -104,14 +100,11 @@ class OrderViewSet(
                 if trip is None:
                     raise ResourceNotFound("Yo'lov topilmadi.")
 
-            try:
-                order = order_services.book_passenger_request(
-                    driver_user=request.user,
-                    passenger_request=passenger_request,
-                    trip=trip,
-                )
-            except BusinessError as exc:
-                raise _raise_business(exc) from exc
+            order = order_services.book_passenger_request(
+                driver_user=request.user,
+                passenger_request=passenger_request,
+                trip=trip,
+            )
             return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
         if trip_id is None:
@@ -121,12 +114,9 @@ class OrderViewSet(
         if trip is None:
             raise ResourceNotFound("Yo'lov topilmadi.")
 
-        try:
-            order = order_services.create_order(
-                passenger=request.user, trip=trip, **data, companion=companion
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.create_order(
+            passenger=request.user, trip=trip, **data, companion=companion
+        )
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
@@ -143,10 +133,7 @@ class OrderViewSet(
     @extend_schema(summary="Buyurtmani qabul qilish (o'rinlar band qilinadi)", request=None, responses={200: OrderSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrderDriver])
     def accept(self, request, pk=None) -> Response:
-        try:
-            order = order_services.accept_order(self.get_object())
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.accept_order(self.get_object())
         return Response(OrderSerializer(order).data)
 
     @extend_schema(
@@ -158,39 +145,27 @@ class OrderViewSet(
     def reject(self, request, pk=None) -> Response:
         serializer = OrderCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            order = order_services.reject_order(
-                self.get_object(), reason=serializer.validated_data.get("reason", "")
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.reject_order(
+            self.get_object(), reason=serializer.validated_data.get("reason", "")
+        )
         return Response(OrderSerializer(order).data)
 
     @extend_schema(summary="Haydovchi yetib keldi", request=None, responses={200: OrderSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrderDriver])
     def arrived(self, request, pk=None) -> Response:
-        try:
-            order = order_services.mark_driver_arrived(self.get_object())
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.mark_driver_arrived(self.get_object())
         return Response(OrderSerializer(order).data)
 
     @extend_schema(summary="Yo'lni boshlash", request=None, responses={200: OrderSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrderDriver])
     def start(self, request, pk=None) -> Response:
-        try:
-            order = order_services.start_order(self.get_object())
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.start_order(self.get_object())
         return Response(OrderSerializer(order).data)
 
     @extend_schema(summary="Buyurtmani yakunlash", request=None, responses={200: OrderSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsOrderDriver])
     def complete(self, request, pk=None) -> Response:
-        try:
-            order = order_services.complete_order(self.get_object())
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.complete_order(self.get_object())
         return Response(OrderSerializer(order).data)
 
     @extend_schema(
@@ -202,12 +177,9 @@ class OrderViewSet(
     def no_show(self, request, pk=None) -> Response:
         serializer = OrderCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            order = order_services.mark_no_show(
-                self.get_object(), reason=serializer.validated_data.get("reason", "")
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        order = order_services.mark_no_show(
+            self.get_object(), reason=serializer.validated_data.get("reason", "")
+        )
         return Response(OrderSerializer(order).data)
 
     # -- passenger side actions -----------------------------------------------
@@ -224,17 +196,14 @@ class OrderViewSet(
         user = request.user
         driver_profile = getattr(user, "driver_profile", None)
         is_driver = driver_profile is not None and driver_profile.pk == order.trip.driver_id
-        try:
-            if is_driver:
-                order = order_services.cancel_order_by_driver(
-                    order, reason=serializer.validated_data.get("reason", "")
-                )
-            else:
-                order = order_services.cancel_order_by_passenger(
-                    order, reason=serializer.validated_data.get("reason", "")
-                )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        if is_driver:
+            order = order_services.cancel_order_by_driver(
+                order, reason=serializer.validated_data.get("reason", "")
+            )
+        else:
+            order = order_services.cancel_order_by_passenger(
+                order, reason=serializer.validated_data.get("reason", "")
+            )
         return Response(OrderSerializer(order).data)
 
     @extend_schema(

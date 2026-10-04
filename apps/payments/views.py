@@ -13,7 +13,6 @@ from __future__ import annotations
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,10 +27,6 @@ from apps.payments.serializers import (
     PaymentSerializer,
     ProviderCallbackSerializer,
 )
-
-
-def _raise_business(exc: BusinessError) -> DRFValidationError:
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -68,16 +63,13 @@ class PaymentViewSet(
         serializer = PaymentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        try:
-            payment, invoice = payment_services.build_payment_invoice(
-                user=request.user,
-                amount=data["amount"],
-                payment_type=data["payment_type"],
-                provider=data["provider"],
-                description=data.get("description", ""),
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        payment, invoice = payment_services.build_payment_invoice(
+            user=request.user,
+            amount=data["amount"],
+            payment_type=data["payment_type"],
+            provider=data["provider"],
+            description=data.get("description", ""),
+        )
         response_data = PaymentSerializer(payment).data
         response_data["invoice"] = invoice
         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -85,10 +77,7 @@ class PaymentViewSet(
     @extend_schema(summary="To'lovni tasdiqlash (admin, naqd)", request=None, responses={200: PaymentSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAdminOrReadOnly])
     def confirm(self, request, pk=None) -> Response:
-        try:
-            payment = payment_services.process_successful_payment(self.get_object(), verified=True)
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        payment = payment_services.process_successful_payment(self.get_object(), verified=True)
         return Response(PaymentSerializer(payment).data)
 
     @extend_schema(
@@ -100,14 +89,11 @@ class PaymentViewSet(
     def refund(self, request, pk=None) -> Response:
         serializer = PaymentRefundSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            payment = payment_services.refund_payment(
-                self.get_object(),
-                amount=serializer.validated_data.get("amount"),
-                reason=serializer.validated_data.get("reason", ""),
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        payment = payment_services.refund_payment(
+            self.get_object(),
+            amount=serializer.validated_data.get("amount"),
+            reason=serializer.validated_data.get("reason", ""),
+        )
         return Response(PaymentSerializer(payment).data)
 
     @extend_schema(summary="Mening to'lovlarim", responses={200: PaymentSerializer(many=True)})

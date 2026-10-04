@@ -49,6 +49,7 @@ from apps.orders.models import Order, OrderPassenger, OrderStatus
 from apps.orders.selectors import get_order_by_id, get_orders_by_trip
 from apps.rides.models import DriverTrip, DriverTripStatus, PassengerRequest, PassengerRequestStatus
 from apps.rides.services import release_seats, reserve_seats
+from apps.subscriptions.services import has_active_subscription
 from apps.users.models import User
 
 logger = logging.getLogger(__name__)
@@ -197,7 +198,7 @@ def book_passenger_request(
         raise NotADriver("Bu amal faqat haydovchilar uchun mavjud.")
     if not driver_profile.is_verified:
         raise DriverNotVerified("Haydovchi profili hali tasdiqlanmagan.")
-    if conf.require_active_subscription_to_drive() and not driver_profile.has_active_subscription:
+    if conf.require_active_subscription_to_drive() and not has_active_subscription(driver_profile):
         raise SubscriptionRequired("Yo'lov qabul qilish uchun faol obuna kerak.")
 
     if passenger_request.status != PassengerRequestStatus.ACTIVE:

@@ -5,12 +5,11 @@ from __future__ import annotations
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.exceptions import BusinessError, ResourceNotFound
+from apps.core.exceptions import ResourceNotFound
 from apps.orders.selectors import get_order_by_id
 from apps.reviews import selectors as review_selectors
 from apps.reviews import services as review_services
@@ -19,10 +18,6 @@ from apps.reviews.serializers import (
     ReviewSerializer,
     ReviewUpdateSerializer,
 )
-
-
-def _raise_business(exc: BusinessError) -> DRFValidationError:
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -80,16 +75,13 @@ class ReviewViewSet(viewsets.ModelViewSet):
         reviewed_user_id = order.driver_user_id
         reviewed_user = order.trip.driver.user if reviewed_user_id != request.user.pk else order.passenger
 
-        try:
-            review = review_services.create_review(
-                order=order,
-                reviewer=request.user,
-                reviewed_user=reviewed_user,
-                rating=data["rating"],
-                comment=data.get("comment", ""),
-            )
-        except BusinessError as exc:
-            raise _raise_business(exc) from exc
+        review = review_services.create_review(
+            order=order,
+            reviewer=request.user,
+            reviewed_user=reviewed_user,
+            rating=data["rating"],
+            comment=data.get("comment", ""),
+        )
         return Response(ReviewSerializer(review).data, status=201)
 
     def partial_update(self, request, *args, **kwargs):

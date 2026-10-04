@@ -860,9 +860,10 @@ def cancel_passenger_request(passenger_request: PassengerRequest) -> PassengerRe
     PassengerRequest.objects.filter(pk=passenger_request.pk).update(
         status=PassengerRequestStatus.CANCELLED
     )
-    passenger_request.matches.filter(
-        status__in=("pending", "notified", "accepted")
-    ).update(status="rejected")
+    # ``TripMatch`` is a pure score table (no lifecycle status of its own), so a
+    # cancelled request simply loses its candidates; re-queuing the request
+    # rebuilds them from scratch.
+    passenger_request.matches.all().delete()
     passenger_request.refresh_from_db(fields=["status"])
     return passenger_request
 

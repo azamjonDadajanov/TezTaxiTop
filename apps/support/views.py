@@ -9,7 +9,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.exceptions import BusinessError
 from apps.orders.selectors import get_order_by_id
 from apps.support import selectors as support_selectors
 from apps.support import services as support_services
@@ -66,20 +65,14 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
             if order is not None and not order.is_participant(request.user):
                 raise PermissionDenied("Bu buyurtma bilan bog'liq murojaat yaratish huquqingiz yo'q.")
 
-        try:
-            ticket = support_services.create_ticket(
-                user=request.user,
-                subject=data["subject"],
-                category=data.get("category", "other"),
-                order=order,
-                is_anonymous=data.get("is_anonymous", False),
-            )
-            support_services.add_message(ticket=ticket, sender=request.user, body=data["body"])
-        except BusinessError as exc:
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-
-            raise DRFValidationError({"detail": exc.message, "code": exc.code}) from exc
-
+        ticket = support_services.create_ticket(
+            user=request.user,
+            subject=data["subject"],
+            category=data.get("category", "other"),
+            order=order,
+            is_anonymous=data.get("is_anonymous", False),
+        )
+        support_services.add_message(ticket=ticket, sender=request.user, body=data["body"])
         return Response(SupportTicketSerializer(ticket).data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):
@@ -87,12 +80,7 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         new_status = request.data.get("status")
         if new_status is None:
             return Response(SupportTicketSerializer(ticket).data)
-        try:
-            ticket = support_services.set_ticket_status(ticket, new_status, actor=request.user)
-        except BusinessError as exc:
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-
-            raise DRFValidationError({"detail": exc.message, "code": exc.code}) from exc
+        ticket = support_services.set_ticket_status(ticket, new_status, actor=request.user)
         return Response(SupportTicketSerializer(ticket).data)
 
 
@@ -130,18 +118,13 @@ class SupportMessageView(APIView):
         serializer = SupportMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        try:
-            message = support_services.add_message(
+        message = support_services.add_message(
                 ticket=ticket,
                 sender=request.user,
                 body=data["body"],
                 is_from_support=request.user.is_staff,
                 attachment_url=data.get("attachment_url", ""),
             )
-        except BusinessError as exc:
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-
-            raise DRFValidationError({"detail": exc.message, "code": exc.code}) from exc
         return Response(
             SupportMessageSerializer(message, context={"request": request}).data,
             status=status.HTTP_201_CREATED,

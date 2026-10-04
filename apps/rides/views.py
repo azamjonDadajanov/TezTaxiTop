@@ -17,7 +17,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core import conf
-from apps.core.exceptions import BusinessError
 from apps.locations.models import Location
 from apps.rides import selectors as ride_selectors
 from apps.rides import services as ride_services
@@ -35,11 +34,6 @@ from apps.rides.serializers import (
 )
 from apps.users.models import DriverProfile
 from apps.vehicles.models import Vehicle
-
-
-def _handle_business_error(exc: BusinessError) -> DRFValidationError:
-    """Convert a business error into a DRF validation error (keeps 4xx codes)."""
-    return DRFValidationError({"detail": exc.message, "code": exc.code, "details": exc.details})
 
 
 @extend_schema_view(
@@ -111,27 +105,19 @@ class DriverTripViewSet(
             )
         except Vehicle.DoesNotExist as exc:
             raise DRFValidationError({"vehicle": "Avtomobil topilmadi."}) from exc
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
         return Response(DriverTripSerializer(trip).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         serializer = self.get_serializer(data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        try:
-            trip = ride_services.update_trip(self.get_object(), **serializer.validated_data)
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        trip = ride_services.update_trip(self.get_object(), **serializer.validated_data)
         return Response(DriverTripSerializer(trip).data)
 
     @extend_schema(summary="Yo'lovni e'lon qilish (qoralama)", request=None, responses={200: DriverTripSerializer})
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None) -> Response:
-        try:
-            trip = ride_services.publish_trip(self.get_object())
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        trip = ride_services.publish_trip(self.get_object())
         return Response(DriverTripSerializer(trip).data)
 
     @extend_schema(
@@ -141,28 +127,19 @@ class DriverTripViewSet(
     )
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None) -> Response:
-        try:
-            trip = ride_services.cancel_trip(self.get_object(), reason=request.data.get("reason", ""))
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        trip = ride_services.cancel_trip(self.get_object(), reason=request.data.get("reason", ""))
         return Response(DriverTripSerializer(trip).data)
 
     @extend_schema(summary="Yo'lni boshlash", request=None, responses={200: DriverTripSerializer})
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None) -> Response:
-        try:
-            trip = ride_services.start_trip(self.get_object())
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        trip = ride_services.start_trip(self.get_object())
         return Response(DriverTripSerializer(trip).data)
 
     @extend_schema(summary="Yo'lovni yakunlash", request=None, responses={200: DriverTripSerializer})
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None) -> Response:
-        try:
-            trip = ride_services.complete_trip(self.get_object())
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        trip = ride_services.complete_trip(self.get_object())
         return Response(DriverTripSerializer(trip).data)
 
     @extend_schema(summary="Mening yo'lovlarim", responses={200: DriverTripSerializer(many=True)})
@@ -217,12 +194,9 @@ class PassengerRequestViewSet(
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            passenger_request = ride_services.create_passenger_request(
-                passenger=request.user, **serializer.validated_data
-            )
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        passenger_request = ride_services.create_passenger_request(
+            passenger=request.user, **serializer.validated_data
+        )
 
         # Matching is asynchronous: the request is answered immediately and the
         # Celery task (if a worker is available) computes the suggestions.
@@ -243,21 +217,15 @@ class PassengerRequestViewSet(
         partial = kwargs.pop("partial", False)
         serializer = self.get_serializer(data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        try:
-            passenger_request = ride_services.update_passenger_request(
-                self.get_object(), **serializer.validated_data
-            )
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        passenger_request = ride_services.update_passenger_request(
+            self.get_object(), **serializer.validated_data
+        )
         return Response(PassengerRequestSerializer(passenger_request).data)
 
     @extend_schema(summary="So'rovni bekor qilish", request=None, responses={200: PassengerRequestSerializer})
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None) -> Response:
-        try:
-            passenger_request = ride_services.cancel_passenger_request(self.get_object())
-        except BusinessError as exc:
-            raise _handle_business_error(exc) from exc
+        passenger_request = ride_services.cancel_passenger_request(self.get_object())
         return Response(PassengerRequestSerializer(passenger_request).data)
 
     @extend_schema(
