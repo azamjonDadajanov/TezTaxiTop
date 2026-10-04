@@ -370,8 +370,12 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
 /* The wrap's height comes from flex-grow under a min-height-only ancestor, so a
    plain `height: 100%` on the map resolves to auto (0px) and Leaflet ends up in
    a zero-size box: HUD visible, tiles and pins clipped away. Filling the wrap as
-   a flex container works whatever way the height was established. */
-.map-page .driver-map-wrap { display: flex; min-height: 420px; flex: 1 1 auto; flex-direction: column; }
+   a flex container works whatever way the height was established.
+   The floor stays at 0 so the wrap takes exactly what the viewport leaves over:
+   with a min-height the wrap outgrew the page, the document scrolled, and the
+   sheet - anchored to the wrap's bottom - pushed its last button row below the
+   fold where nothing could reach it. */
+.map-page .driver-map-wrap { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; }
 .map-page .driver-map { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; }
 .driver-map .leaflet-control-attribution { font-size: 8px; }
 .driver-map .leaflet-control-zoom { border: 0; border-radius: 5px; box-shadow: 0 6px 16px rgba(19,49,38,.16); overflow: hidden; }
@@ -410,7 +414,11 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
 .driver-map-arrow svg { fill: currentColor; }
 .driver-map-driver { display: grid; width: 20px; height: 20px; place-items: center; border: 3px solid white; border-radius: 50%; color: white; background: #1f4f7a; box-shadow: 0 0 0 3px rgba(31,79,122,.25); }
 .driver-map-driver svg { fill: currentColor; }
-.driver-map-sheet { position: absolute; z-index: 600; right: 0; bottom: 0; left: 0; display: grid; gap: 10px; padding: 15px 16px 16px; border-top: 1px solid #dde5da; background: rgba(255,255,255,.97); box-shadow: 0 -14px 34px rgba(19,49,38,.16); animation: rise-in .2s ease both; backdrop-filter: blur(12px); }
+/* Capped to the map and scrollable: the sheet is anchored to the wrap's bottom,
+   so on a short window a tall card used to run past the top edge where
+   `overflow: hidden` on the wrap silently ate its first rows. Scrolling keeps
+   every control reachable instead. */
+.driver-map-sheet { position: absolute; z-index: 600; right: 0; bottom: 0; left: 0; display: grid; max-height: 100%; gap: 10px; padding: 15px 16px 16px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid #dde5da; background: rgba(255,255,255,.97); box-shadow: 0 -14px 34px rgba(19,49,38,.16); animation: rise-in .2s ease both; backdrop-filter: blur(12px); }
 .driver-map-grip { width: 34px; height: 4px; margin: -4px auto 0; border-radius: 99px; background: #d6dfd3; }
 .driver-map-sheet-head { display: flex; align-items: center; gap: 10px; }
 .driver-map-sheet-who { display: grid; min-width: 0; flex: 1; gap: 2px; }
@@ -438,7 +446,6 @@ input:focus, select:focus, textarea:focus { border-color: #91aa73; box-shadow: 0
   .dashboard-lower { gap: 20px; }
   .driver-map { height: clamp(380px, 64vh, 620px); }
   .map-page .driver-map { height: auto; }
-  .map-page .driver-map-wrap { min-height: 380px; }
 }
 @media (max-width: 800px) {
   .sidebar { z-index: 60; width: min(82vw, 290px); transform: translateX(-102%); transition: transform .22s ease; box-shadow: 15px 0 50px rgba(19,49,38,.15); }
