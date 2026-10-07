@@ -68,7 +68,6 @@ from apps.rides.selectors import (
 )
 from apps.users.models import DriverProfile, User
 from apps.vehicles.models import Vehicle
-from apps.matching.services import match_passenger_request_to_trip
 
 logger = logging.getLogger(__name__)
 
@@ -789,6 +788,8 @@ def _create_passenger_request_in_transaction(
     )
     passenger_request.full_clean()
     passenger_request.save()
+    from apps.matching.services import match_passenger_request_to_trip
+
     transaction.on_commit(
         lambda: match_passenger_request_to_trip(passenger_request, get_active_trips())
     )

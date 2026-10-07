@@ -439,13 +439,6 @@ class PassengerRequest(RouteEndpointMixin, OriginPointSnapshot, DestinationPoint
                 | models.Q(max_price_per_seat__gte=NON_NEGATIVE),
                 name="passenger_request_max_price_non_negative",
             ),
-            models.UniqueConstraint(
-                fields=["trip", "passenger"],
-                condition=models.Q(
-                    status="active"
-                ),
-                name="unique_active_passenger_trip",
-            ),
             *point_pair_constraints("from", name_prefix="passenger_request"),
             *point_pair_constraints("to", name_prefix="passenger_request"),
         ]
