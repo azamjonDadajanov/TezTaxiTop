@@ -168,6 +168,9 @@ def create_order(
     _notify_driver(order)
     _sync_chat(order, "Buyurtma yaratildi. Haydovchi bilan suhbatlashishingiz mumkin.")
 
+    trip.available_seats -= seats_booked
+    trip.save(update_fields=["available_seats", "updated_at"])
+
     logger.info("Buyurtma yaratildi: #%s (trip=%s, o'rin=%s)", order.pk, trip.pk, seats_booked)
     return order
 

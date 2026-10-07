@@ -164,7 +164,7 @@ def deliver_pending_notifications_task(limit: int = DELIVERY_BATCH_SIZE) -> dict
     }
 
 
-@shared_task(name="apps.notifications.tasks.send_notification_task")
+@shared_task(name="apps.notifications.tasks.send_notification_task", auto_retry_for=(Exception,), retry_kwargs={"max_retries": 5, "countdown": 60, "retry_backoff": True})
 def send_notification_task(notification_id: int) -> dict:
     """Deliver one notification immediately (used for time-critical events)."""
     from apps.core.telegram import get_telegram_gateway

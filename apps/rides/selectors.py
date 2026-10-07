@@ -98,6 +98,13 @@ def get_trips() -> QuerySet[DriverTrip]:
 def get_trip_by_id(trip_id: int) -> DriverTrip | None:
     return get_trip_queryset().filter(pk=trip_id).first()
 
+def get_trip_by_id_for_update(trip_id: int) -> DriverTrip | None:
+    """Get a trip by ID and lock it for update.
+
+    This is used to prevent race conditions when multiple processes are trying
+    to update the same trip at the same time.
+    """
+    return get_trip_queryset().select_for_update().select_related("driver", "vehicle").filter(pk=trip_id).first()
 
 def get_trips_by_driver(driver) -> QuerySet[DriverTrip]:
     return get_trip_queryset().filter(driver=driver)

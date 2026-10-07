@@ -25,7 +25,7 @@ from apps.orders.serializers import (
     OrderCreateSerializer,
     OrderSerializer,
 )
-from apps.rides.selectors import get_trip_by_id
+from apps.rides.selectors import get_trip_by_id, get_trip_by_id_for_update
 
 
 @extend_schema_view(
@@ -96,7 +96,7 @@ class OrderViewSet(
 
             trip = None
             if trip_id is not None:
-                trip = get_trip_by_id(trip_id)
+                trip = get_trip_by_id_for_update(trip_id)
                 if trip is None:
                     raise ResourceNotFound("Yo'lov topilmadi.")
 
@@ -110,7 +110,7 @@ class OrderViewSet(
         if trip_id is None:
             raise DRFValidationError({"trip": "Yo'lov tanlanishi shart."})
 
-        trip = get_trip_by_id(trip_id)
+        trip = get_trip_by_id_for_update(trip_id)
         if trip is None:
             raise ResourceNotFound("Yo'lov topilmadi.")
 

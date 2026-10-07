@@ -663,6 +663,38 @@ def get_required_request(request_id: int) -> PassengerRequest:
     return passenger_request
 
 
+
+@transaction.atomic
+def match_passenger_request_to_trip(passenger_request: PassengerRequest, trips: DriverTrip) -> TripMatch:
+    """Create a match between a passenger request and a driver trip."""
+    matches = []
+    for trip in trips:
+        if trip.driver.user_id == passenger_request.passenger_id:
+            raise ValueError(f"Cannot match request {passenger_request.pk} to trip {trip.pk}: own trip")
+        
+        score = score_trip_for_request(trip, passenger_request)
+        if not score.is_match:
+            # raise ValueError(f"Cannot match request {passenger_request.pk} to trip {trip.pk}: {score.excluded}")
+            continue  # Skip this trip if it doesn't match
+        match = TripMatch(
+            request=passenger_request,
+            trip=trip,
+            score=score.total,
+            time_score=score.time_score,
+            price_score=score.price_score,
+            rating_score=score.rating_score,
+            subscription_score=score.subscription_score,
+            vehicle_score=score.vehicle_score,
+            minutes_difference=score.minutes_difference,
+            price_difference=score.price_difference,
+            rank=1,  # Initial rank; will be updated in refresh_matches_for_request
+        )
+        match.save()
+        matches.append(match)
+    if not matches:
+        raise ValueError(f"No suitable trips found for request {passenger_request.pk}")
+    return match
+
 __all__ = [
     "MAX_SCORE",
     "ROUTE_BASIS_COORDINATES",
@@ -677,6 +709,7 @@ __all__ = [
     "get_ranked_matches_for_trip",
     "get_required_request",
     "get_suitable_requests_by_trip",
+    "match_passenger_request_to_trip",
     "rank_requests_for_trip",
     "rank_trips_for_request",
     "refresh_all_active_matches",

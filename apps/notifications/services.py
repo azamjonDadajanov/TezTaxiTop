@@ -34,8 +34,8 @@ def _schedule_delivery(notification_id: int) -> None:
         from apps.notifications.tasks import send_notification_task
 
         transaction.on_commit(lambda: send_notification_task.delay(notification_id))
-    except Exception:
-        pass
+    except Exception as e:
+        logging.exception("Failed to schedule notification delivery for %s; Error: %s", notification_id, str(e))
 
 
 @transaction.atomic
